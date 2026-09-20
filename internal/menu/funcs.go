@@ -369,13 +369,12 @@ func (e *Engine) doType(typ byte, data string, ns bool) bool {
 	case 51:
 		e.todaysCallers()
 	case 52:
-		e.whosOnline()
+		e.showUsersOnline(data, true)
 	case 53:
 		e.toggleBit(lang.Quiet, lang.Quiet, &e.Line.User.Attribute, cfgrec.UserQuiet, true)
+		e.writeUserOn("", 0)
 	case 54:
-		e.T.WriteRA(e.T.RalGet(lang.MsgTo))
-		e.T.Println("")
-		e.T.PressEnter()
+		e.bbsSendMessage(0, data)
 	case 56:
 		e.T.WriteRA(e.T.RalStr(lang.NoNLhelp))
 		e.T.Println("")
@@ -745,23 +744,6 @@ func (e *Engine) todaysCallers() {
 			e.T.Println(fmt.Sprintf("  %-20s  %3d", name, line))
 		}
 	}
-	e.T.PressEnter()
-}
-
-func (e *Engine) whosOnline() {
-	e.T.ClearScreen()
-	e.T.Println("")
-	e.T.WriteRA("`A15:" + e.T.RalStr(lang.Online) + " " + e.G.RaConfig.SystemName + "\r\n")
-	e.T.Println("")
-	e.T.WriteRA("`A10:" + e.T.RalGet(lang.OnlineHdr) + "\r\n")
-	name := clipOnline(onlineDisplayName(e.Line.User), 30)
-	city := clipOnline(e.Line.User.Location, 21)
-	status := e.T.RalStr(lang.Browsing)
-	e.T.WriteRA("`X01:`A11:" + name +
-		"`X31:`A15:" + strconv.Itoa(e.Line.RaNodeNr) +
-		"`X38:`A15:" + strconv.Itoa(int(e.Line.Baud)) +
-		"`X48:`A15:" + status +
-		"`X59:`A14:" + city + "\r\n")
 	e.T.PressEnter()
 }
 

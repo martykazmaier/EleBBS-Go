@@ -11,6 +11,7 @@ import (
 	"elebbs/internal/crc"
 	"elebbs/internal/lang"
 	"elebbs/internal/logx"
+	"elebbs/internal/online"
 	"elebbs/internal/pascal"
 	"elebbs/internal/quest"
 	"elebbs/internal/term"
@@ -530,6 +531,7 @@ func finishLogon(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, u cfgrec
 	line.User = u
 	config.BumpSysInfoCalls(g, line)
 	_ = userbase.Write(g, u)
+	_ = online.Write(g, line, "", online.StatusBrowsing)
 	logx.Write(g, line.RaNodeNr, '>', fmt.Sprintf("%s logged on, security %d", u.Name, u.Security))
 	t.DrainLineEnds()
 	t.ClearScreen()
