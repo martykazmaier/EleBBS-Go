@@ -1,0 +1,6 @@
+# Pascal source from https://github.com/mbek/elebbs (Q Public License).
+# Go port binaries: cmd/elebbs, cmd/elefile, cmd/elemgr.
+
+*.exe
+*.test
+*.out
