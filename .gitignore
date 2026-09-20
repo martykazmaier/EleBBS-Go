@@ -1,6 +1,12 @@
 # Pascal source from https://github.com/mbek/elebbs (Q Public License).
-# Go port binaries: cmd/elebbs, cmd/elefile, cmd/elemgr.
+# Published Go programs: cmd/elebbs, cmd/eleserv, cmd/elemail.
 
 *.exe
 *.test
 *.out
+
+# Untested — keep local, do not publish.
+/cmd/elconfig/
+/cmd/elefile/
+/cmd/elemgr/
+/EleBBS-Go/
