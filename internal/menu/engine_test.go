@@ -11,6 +11,7 @@ import (
 
 	"elebbs/internal/cfgrec"
 	"elebbs/internal/crc"
+	"elebbs/internal/online"
 	"elebbs/internal/term"
 )
 
@@ -570,14 +571,19 @@ func TestStripMenuSwitchesKeepsDoorFlags(t *testing.T) {
 }
 
 func TestWhosOnlineShowsHandleNotRealName(t *testing.T) {
+	dir := t.TempDir()
 	st := &seqStream{in: []byte("\r")}
 	g := &cfgrec.GlobalCfg{}
 	g.RaConfig.SystemName = "Test Board"
+	g.RaConfig.SysPath = dir
 	line := &cfgrec.LineCfg{
 		AnsiOn:   true,
 		RaNodeNr: 2,
 		Baud:     65529,
 		User:     cfgrec.User{Name: "Martin Kazmaier", Handle: "Shurato", Location: "Calgary", Record: -1},
+	}
+	if err := online.Write(g, line, "", online.StatusBrowsing); err != nil {
+		t.Fatal(err)
 	}
 	tio := term.New(st, g, line)
 	eng := &Engine{T: tio, G: g, Line: line}
@@ -600,5 +606,46 @@ func TestWhosOnlineShowsHandleNotRealName(t *testing.T) {
 	hdr := "Name                         Line   BaudRate   Status     Location"
 	if !bytes.Contains(out, []byte(hdr)) {
 		t.Fatalf("header missing Location columns: %q", out)
+	}
+}
+
+func TestBBSSendMessageWritesNodeRA(t *testing.T) {
+	dir := t.TempDir()
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.SystemName = "Test Board"
+	sender := &cfgrec.LineCfg{
+		AnsiOn:   true,
+		RaNodeNr: 1,
+		Baud:     65529,
+		User:     cfgrec.User{Name: "Martin Kazmaier", Handle: "Shurato", Location: "Calgary", Record: -1},
+	}
+	dest := &cfgrec.LineCfg{
+		AnsiOn:   true,
+		RaNodeNr: 2,
+		Baud:     2400,
+		User:     cfgrec.User{Name: "Other User", Handle: "Other", Location: "Town", Record: -1},
+	}
+	if err := online.Write(g, sender, "", online.StatusBrowsing); err != nil {
+		t.Fatal(err)
+	}
+	if err := online.Write(g, dest, "", online.StatusBrowsing); err != nil {
+		t.Fatal(err)
+	}
+	st := &seqStream{in: []byte("2\rhello there\r\rS\r")}
+	tio := term.New(st, g, sender)
+	eng := &Engine{T: tio, G: g, Line: sender}
+	if !eng.ExecType(54, "") {
+		t.Fatal("type 54")
+	}
+	b, err := os.ReadFile(online.NodePath(g, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("hello there")) {
+		t.Fatalf("body missing: %q", b)
+	}
+	if !bytes.Contains(b, []byte("\x0b]497")) {
+		t.Fatalf("pascal header missing: %q", b)
 	}
 }

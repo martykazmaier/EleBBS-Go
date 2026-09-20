@@ -20,6 +20,7 @@ import (
 	"elebbs/internal/logx"
 	"elebbs/internal/mail"
 	"elebbs/internal/menu"
+	"elebbs/internal/online"
 	"elebbs/internal/quest"
 	"elebbs/internal/term"
 )
@@ -112,6 +113,7 @@ func (s *Session) RunOn(st comm.Stream) error {
 	}
 	t.Ral = lang.Load(s.G, s.Line.Language)
 	eng.Enter()
+	online.Kill(s.G, s.Line)
 	t.Println("")
 	t.WriteRA("`A14:Goodbye from " + s.G.RaConfig.SystemName + "`A7:\r\n")
 	term.DisplayHotFile(t, s.G.RaConfig.TextPath, "goodbye")

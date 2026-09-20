@@ -1,10 +1,13 @@
 package menu
 
 import (
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"elebbs/internal/cfgrec"
@@ -29,6 +32,8 @@ type Engine struct {
 	lbarOK         bool
 	lbarItem       cfgrec.MenuItem
 	dropLogonEnter bool
+	nodeCheckOff   bool
+	lastNodeCheck  time.Time
 }
 
 func (e *Engine) Enter() {
@@ -492,8 +497,12 @@ func (e *Engine) getMenuChoice(items []cfgrec.MenuItem, bars []cfgrec.LightBar, 
 		return ok
 	}
 	for {
-		ch, err := e.T.GetKey(0)
+		e.checkNodeMsg()
+		ch, err := e.T.GetKey(3 * time.Second)
 		if err != nil {
+			if isReadTimeout(err) {
+				continue
+			}
 			e.Hang = true
 			return 0, false
 		}
@@ -666,8 +675,7 @@ func (e *Engine) fallback() {
 		case 'R':
 			e.readMessages("/M")
 		case 'W':
-			e.T.Println("Node " + itoa(e.Line.RaNodeNr) + ": " + e.Line.User.Name)
-			e.T.PressEnter()
+			e.showUsersOnline("", true)
 		case 'G', 'Q':
 			e.Hang = true
 			return
@@ -707,4 +715,12 @@ func hotKeyBytes(hot map[string]cfgrec.MenuItem) map[byte]struct{} {
 		}
 	}
 	return m
+}
+
+func isReadTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
