@@ -10,3 +10,7 @@
 /cmd/elefile/
 /cmd/elemgr/
 /EleBBS-Go/
+
+# Tests leave DOS separators unmapped on non-Windows hosts, so they create
+# files whose names contain literal backslashes. Never a real path here.
+*\\*
