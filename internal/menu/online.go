@@ -1,7 +1,7 @@
 package menu
 
 import (
-	"path/filepath"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -11,7 +11,6 @@ import (
 	"elebbs/internal/online"
 	"elebbs/internal/pascal"
 	"elebbs/internal/quest"
-	"elebbs/internal/term"
 )
 
 func (e *Engine) showUsersOnline(misc string, addCR bool) {
@@ -97,14 +96,19 @@ func (e *Engine) whosOnlineHook(recs []online.Record, recordNum, start int, down
 			break
 		}
 	}
+	name := pascal.Trim(rec.Handle)
+	if name == "" {
+		name = rec.Name
+	}
 	put(start, rec.Name)
-	put(start+1, rec.Handle)
+	put(start+1, name)
 	put(start+2, rec.DisplayLine())
 	put(start+3, strconv.Itoa(int(rec.Baud)))
 	put(start+4, rec.City)
 	put(start+5, e.useronStatus(rec))
 	put(start+6, strconv.Itoa(int(rec.NoCalls)))
-	put(start+7, strconv.Itoa(idx+1))
+	// Pascal FilePos DIV SizeOf after BlkRead; WHONLINE then Inc 5.
+	put(start+7, strconv.Itoa(idx))
 }
 
 func (e *Engine) useronStatus(rec online.Record) string {
@@ -232,12 +236,17 @@ func (e *Engine) checkNodeMsg() {
 		return
 	}
 	e.lastNodeCheck = now
-	if !online.NodeMsgReady(e.G, e.Line.RaNodeNr) {
+	p := online.FindNodeFile(e.G, e.Line.RaNodeNr)
+	if p == "" {
+		return
+	}
+	b, err := os.ReadFile(p)
+	if err != nil || len(b) == 0 {
 		return
 	}
 	e.nodeCheckOff = true
-	p := online.NodePath(e.G, e.Line.RaNodeNr)
-	term.DisplayHotFile(e.T, filepath.Dir(p), p)
+	e.T.ResetLines(1)
+	e.T.WriteRA(pascal.FromCP437(b))
 	online.ClearNodeMsg(e.G, e.Line.RaNodeNr)
 	e.nodeCheckOff = false
 }

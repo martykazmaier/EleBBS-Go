@@ -830,3 +830,50 @@ func TestIfInAtAndEquals(t *testing.T) {
 		t.Fatal("UP compare")
 	}
 }
+
+func TestDoContinueUsesStopMore(t *testing.T) {
+	st := &memStream{}
+	g := &cfgrec.GlobalCfg{}
+	line := &cfgrec.LineCfg{}
+	tio := term.New(st, g, line)
+	q := &vm{t: tio}
+	q.cmdExtra("DOCONTINUE", "5")
+	if q.get(5) != "YES" {
+		t.Fatalf("DoContinue=%q want YES (not AskYesNo)", q.get(5))
+	}
+	tio.StopMore = true
+	q.cmdExtra("DOCONTINUE", "5")
+	if q.get(5) != "NO" {
+		t.Fatalf("StopMore DoContinue=%q want NO", q.get(5))
+	}
+	if bytes.Contains(st.out.Bytes(), []byte("correct")) || bytes.Contains(st.out.Bytes(), []byte("Correct")) {
+		t.Fatalf("DoContinue asked Is this correct?: %q", st.out.Bytes())
+	}
+}
+
+func TestFileWriteUsesCP437(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "out.txt")
+	script := []byte("Fileopen 1 " + out + "\r\nFilewrite 1 \xC4\r\nFileclose 1\r\nQUIT\r\n")
+	if err := os.WriteFile(filepath.Join(dir, "fw.q-a"), script, 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	st := &memStream{}
+	line := &cfgrec.LineCfg{AnsiOn: true}
+	line.Language.QuesPath = dir
+	tio := term.New(st, g, line)
+	Run(tio, g, line, "fw", "")
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte{0xC4}) {
+		t.Fatalf("want CP437 0xC4, got %q", b)
+	}
+	if bytes.Contains(b, []byte{0xE2, 0x94, 0x80}) {
+		t.Fatalf("Filewrite wrote UTF-8: %q", b)
+	}
+}

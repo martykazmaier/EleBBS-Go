@@ -822,6 +822,18 @@ func TestGetStringConsumesCRLFLeavingNoEnter(t *testing.T) {
 	}
 }
 
+func TestGetStringIgnoresLeftoverLF(t *testing.T) {
+	st := &keyStream{in: []byte("\nhello\r")}
+	tio := New(st, &cfgrec.GlobalCfg{}, &cfgrec.LineCfg{})
+	got, err := tio.GetString(40, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "hello" {
+		t.Fatalf("GetString=%q want hello (LF after node Enter aborted message ASK)", got)
+	}
+}
+
 func TestDrainLineEndsDropsTelnetEnter(t *testing.T) {
 	st := &keyStream{in: []byte("\nM")}
 	tio := New(st, &cfgrec.GlobalCfg{}, &cfgrec.LineCfg{})
@@ -921,5 +933,43 @@ func TestRaduXYSpansSeparateWrites(t *testing.T) {
 	}
 	if !bytes.Contains(out, []byte("General")) {
 		t.Fatalf("name missing: %q", out)
+	}
+}
+
+func TestStripRalYesNo(t *testing.T) {
+	s, def := stripRalYesNo("Send files with this message N", true)
+	if s != "Send files with this message " || def {
+		t.Fatalf("strip N: %q %v", s, def)
+	}
+	s, def = stripRalYesNo("Pause after each message Y", false)
+	if s != "Pause after each message " || !def {
+		t.Fatalf("strip Y: %q %v", s, def)
+	}
+	s, def = stripRalYesNo("Send files with this message", false)
+	if s != "Send files with this message" || def {
+		t.Fatalf("no trailer: %q %v", s, def)
+	}
+}
+
+func TestAskYesNoUsesYesNoQuest(t *testing.T) {
+	st := &keyStream{in: []byte("x")}
+	line := &cfgrec.LineCfg{AnsiOn: true}
+	tio := New(st, &cfgrec.GlobalCfg{}, line)
+	called := false
+	tio.YesNoQuest = func(defYes bool) (bool, bool) {
+		called = true
+		if defYes {
+			t.Fatal("AttFiles1 default is no")
+		}
+		return true, true
+	}
+	if !tio.AskYesNo(lang.AttFiles1, false) {
+		t.Fatal("expected yes from YESNO.Q-A")
+	}
+	if !called {
+		t.Fatal("YesNoQuest not used")
+	}
+	if bytes.Contains(st.out.Bytes(), []byte("[y/N]")) || bytes.Contains(st.out.Bytes(), []byte("[Y/n]")) {
+		t.Fatalf("fallback brackets used: %q", st.out.Bytes())
 	}
 }

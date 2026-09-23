@@ -309,6 +309,7 @@ func articleAt(hdr, txt *os.File, loc int64, fallback int) (Article, bool) {
 		Received: attr&jamRcvd != 0,
 		Sent:     attr&jamSent != 0,
 		Private:  attr&jamPrivate != 0,
+		FAttach:  attr&jamFAttach != 0,
 		Attr:     attr,
 	}
 	if a.Num == 0 {
@@ -358,6 +359,19 @@ func SetSent(base string, num int) {
 }
 
 func jamSetAttrBit(base string, num int, bit uint32) {
+	jamChangeAttr(base, num, func(attr uint32) uint32 { return attr | bit })
+}
+
+func jamClearAttrBit(base string, num int, bit uint32) {
+	jamChangeAttr(base, num, func(attr uint32) uint32 { return attr &^ bit })
+}
+
+// ClearFAttach is Pascal SetFAttach(False) + ReWriteHdr after killing attaches.
+func ClearFAttach(base string, num int) {
+	jamClearAttrBit(base, num, jamFAttach)
+}
+
+func jamChangeAttr(base string, num int, fn func(uint32) uint32) {
 	if num < 1 {
 		return
 	}
@@ -379,7 +393,7 @@ func jamSetAttrBit(base string, num int, bit uint32) {
 	if _, err := hdr.ReadAt(attrBuf[:], loc+52); err != nil {
 		return
 	}
-	attr := binary.LittleEndian.Uint32(attrBuf[:]) | bit
+	attr := fn(binary.LittleEndian.Uint32(attrBuf[:]))
 	binary.LittleEndian.PutUint32(attrBuf[:], attr)
 	_, _ = hdr.WriteAt(attrBuf[:], loc+52)
 }
@@ -395,13 +409,17 @@ func CanRead(a Article, u cfgrec.User, sysop bool) bool {
 }
 
 func AttrString(a Article) string {
+	var parts []string
 	if a.Received {
-		return "Rcvd"
+		parts = append(parts, "Rcvd")
 	}
 	if a.Private {
-		return "Pvt"
+		parts = append(parts, "Pvt")
 	}
-	return ""
+	if a.FAttach {
+		parts = append(parts, "File")
+	}
+	return strings.Join(parts, " ")
 }
 
 func SetLastRead(base, name, handle string, high int) {
@@ -553,6 +571,9 @@ func AppendMsg(base string, a Article) (int, error) {
 	}
 	if a.Private {
 		attr |= jamPrivate
+	}
+	if a.FAttach {
+		attr |= jamFAttach
 	}
 	binary.LittleEndian.PutUint32(h[52:], attr)
 	binary.LittleEndian.PutUint32(h[60:], uint32(textOfs))

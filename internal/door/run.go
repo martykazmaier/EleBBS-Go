@@ -87,7 +87,8 @@ func Run(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, areas []cfgrec.F
 	} else if isBatch(exe) {
 		spawnExe, spawnRest = viaComspec(exe, rest)
 	}
-	err := spawnDoor(spawnExe, spawnRest, "", handles, flags.inherit && !isBatch(exe), 0)
+	// Child cwd is the node directory (drop files, DSZ.CTL, DSZLOG filename).
+	err := spawnDoor(spawnExe, spawnRest, dir, handles, flags.inherit && !isBatch(exe), 0)
 	if dup != 0 && dup != sock {
 		closeSocket(dup)
 	}

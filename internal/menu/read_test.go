@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"elebbs/internal/cfgrec"
 	"elebbs/internal/mail"
@@ -82,5 +83,148 @@ func TestReplyLoadsInternalFSED(t *testing.T) {
 	}
 	if bytes.Contains(out, []byte("Begin entering")) || bytes.Contains(bytes.ToLower(out), []byte("beginmsg")) {
 		t.Fatalf("fell back to line editor: %q", out)
+	}
+}
+
+func TestMsgBarPassesFileAttach(t *testing.T) {
+	dir := t.TempDir()
+	att := filepath.Join(dir, "attach", "AT120000")
+	if err := os.MkdirAll(att, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(att, "photo.png"), []byte("png"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(dir, "email")
+	if _, err := mail.AppendMsg(base, mail.Article{
+		From: "Alice", To: "Bob", Subject: att, Body: "see photo\r\n", FAttach: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "msgbar.q-a"), []byte(
+		"GETPARAMETER 1 1\r\nDISPLAY 1\r\nSETRESULT N\r\nQUIT\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	st := &seqStream{}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	line := &cfgrec.LineCfg{
+		AnsiOn: true,
+		User:   cfgrec.User{Name: "Bob", Security: 100, Record: -1},
+	}
+	line.Language.QuesPath = dir
+	tio := term.New(st, g, line)
+	eng := &Engine{T: tio, G: g, Line: line}
+	a := cfgrec.MessageArea{AreaNum: 1, Name: "Email", Attribute: 1 << 7, JAMBase: base}
+	art, ok := mail.ReadMsg(base, 1)
+	if !ok || !art.FAttach {
+		t.Fatal("need FAttach msg")
+	}
+	eng.showMessage(a, art, false)
+	out := bytes.ToUpper(st.out.Bytes())
+	if !bytes.Contains(out, []byte("FILEATTACH")) {
+		t.Fatalf("MSGBAR missing FILEATTACH: %q", st.out.Bytes())
+	}
+}
+
+func TestAttachDownloadFromReader(t *testing.T) {
+	dir := t.TempDir()
+	att := filepath.Join(dir, "attach", "AT120001")
+	if err := os.MkdirAll(att, 0755); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("png-bytes")
+	if err := os.WriteFile(filepath.Join(att, "photo.png"), payload, 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	base := filepath.Join(dir, "email")
+	if _, err := mail.AppendMsg(base, mail.Article{
+		From: "Alice", To: "All", Subject: att, Body: "see photo\r\n", FAttach: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := &seqStream{in: []byte("F\rgot\r\r")}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	line := &cfgrec.LineCfg{
+		User: cfgrec.User{Name: "Bob", Security: 100, Record: -1},
+	}
+	tio := term.New(st, g, line)
+	eng := &Engine{T: tio, G: g, Line: line}
+	a := cfgrec.MessageArea{AreaNum: 1, Name: "Email", Attribute: 1 << 7, JAMBase: base}
+	art, ok := mail.ReadMsg(base, 1)
+	if !ok {
+		t.Fatal("no msg")
+	}
+	eng.showMessage(a, art, false)
+	out := st.out.Bytes()
+	if !bytes.Contains(out, []byte("[F]iles")) {
+		t.Fatalf("no Files option: %q", out)
+	}
+	if !bytes.Contains(bytes.ToLower(out), []byte("photo.png")) {
+		t.Fatalf("did not list attach: %q", out)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "got", "photo.png"))
+	if err != nil {
+		t.Fatalf("not downloaded: %v\n%s", err, out)
+	}
+	if string(got) != string(payload) {
+		t.Fatalf("copied %q", got)
+	}
+}
+
+func TestShowMessageAttachUsesLanguageStrings(t *testing.T) {
+	dir := t.TempDir()
+	att := filepath.Join(dir, "attach", "AT120002")
+	if err := os.MkdirAll(att, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(att, "photo.png"), []byte("png"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(dir, "email")
+	when := time.Date(2026, 9, 20, 15, 4, 0, 0, time.Local)
+	if _, err := mail.AppendMsg(base, mail.Article{
+		From: "Alice", To: "Bob", Subject: att, Body: "see photo\r\n",
+		FAttach: true, Private: true, Date: when,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "rdmsg.q-a"), []byte(
+		"DISPLAY 3\r\nDISPLAY \"|\"\r\nDISPLAY 5\r\nDISPLAY \"|\"\r\nDISPLAY 10\r\nSETRESULT N\r\nQUIT\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	st := &seqStream{}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	line := &cfgrec.LineCfg{
+		AnsiOn: true,
+		User:   cfgrec.User{Name: "Bob", Security: 100, Record: -1, DateFormat: 5},
+	}
+	line.Language.QuesPath = dir
+	tio := term.New(st, g, line)
+	eng := &Engine{T: tio, G: g, Line: line}
+	a := cfgrec.MessageArea{AreaNum: 1, Name: "Email", Attribute: 1 << 7, JAMBase: base}
+	art, ok := mail.ReadMsg(base, 1)
+	if !ok || !art.FAttach {
+		t.Fatal("need FAttach msg")
+	}
+	eng.showMessage(a, art, false)
+	out := st.out.Bytes()
+	if !bytes.Contains(out, []byte("Files attached")) {
+		t.Fatalf("RDMSG #10 want AttFiles2: %q", out)
+	}
+	if bytes.Contains(out, []byte("AT120002")) {
+		t.Fatalf("raw attach path in RDMSG: %q", out)
+	}
+	if !bytes.Contains(out, []byte("File attach")) {
+		t.Fatalf("RDMSG #5 want FileAtt1: %q", out)
+	}
+	if !bytes.Contains(out, []byte("20-09-2026")) {
+		t.Fatalf("RDMSG #3 want user date format: %q", out)
 	}
 }

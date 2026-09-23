@@ -31,14 +31,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%sSystem: %s  Sysop: %s\n", cfgrec.SystemMsgPrefix, g.RaConfig.SystemName, g.RaConfig.Sysop)
 	}
 
-	if opt.Listen != "" {
-		if err := bbs.ListenAndServe(g, opt); err != nil {
-			fmt.Fprintf(os.Stderr, "%s%s\n", cfgrec.SystemMsgPrefix, err.Error())
-			os.Exit(1)
-		}
-		return
-	}
-
 	sess := bbs.New(g, opt)
 	if err := sess.Run(); err != nil && !errors.Is(err, io.EOF) {
 		fmt.Fprintf(os.Stderr, "%s%s\n", cfgrec.SystemMsgPrefix, err.Error())

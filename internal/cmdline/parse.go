@@ -30,7 +30,6 @@ type Options struct {
 	Monitor         bool
 	TelnetFromIP    string
 	TelnetServ      bool
-	Listen          string
 	Mailer          string
 	BatchAtExit     string
 	EventMins       int
@@ -86,14 +85,6 @@ func Parse(args []string, full bool) Options {
 		}
 		if key == "?" {
 			o.ShowHelp = true
-			continue
-		}
-		if strings.HasPrefix(key, "LISTEN") {
-			o.TelnetServ = true
-			o.Listen = stripFlag(a, "LISTEN")
-			if o.Listen == "" {
-				o.Listen = ":23"
-			}
 			continue
 		}
 		switch {
@@ -183,18 +174,6 @@ func parseHandle(s string) uintptr {
 	return uintptr(n)
 }
 
-func stripFlag(arg, name string) string {
-	u := strings.ToUpper(arg)
-	i := strings.Index(u, name)
-	if i < 0 {
-		return ""
-	}
-	rest := arg[i+len(name):]
-	rest = strings.TrimSpace(rest)
-	rest = strings.TrimPrefix(rest, "=")
-	return strings.TrimSpace(rest)
-}
-
 func Apply(line *cfgrec.LineCfg, o Options) {
 	line.RaNodeNr = o.Node
 	line.LocalLogon = o.Local
@@ -213,7 +192,7 @@ func Apply(line *cfgrec.LineCfg, o Options) {
 	if o.ComPort > 0 {
 		line.Modem.ComPort = byte(o.ComPort)
 	}
-	if o.Local || line.Baud == 0 && o.InheritedHandle == ^uintptr(0) && !o.TelnetServ && o.Listen == "" && o.ComPort == 0 {
+	if o.Local || line.Baud == 0 && o.InheritedHandle == ^uintptr(0) && !o.TelnetServ && o.ComPort == 0 {
 		line.LocalLogon = true
 		line.Baud = 0
 		line.CarrierCheck = false
@@ -260,6 +239,5 @@ func HelpText() string {
 	b.WriteString("-XI<ip>                - Remote IP address from the front-end\n")
 	b.WriteString("-XM                    - Make EleBBS available for EleMON\n")
 	b.WriteString("-FEND                  - Batch file to execute after the session\n")
-	b.WriteString("-LISTEN=:port          - Listen for telnet (Go port helper)\n")
 	return b.String()
 }

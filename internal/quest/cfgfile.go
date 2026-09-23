@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"elebbs/internal/cfgrec"
+	"elebbs/internal/config"
 	"elebbs/internal/pascal"
 	"elebbs/internal/userbase"
 )
@@ -48,6 +49,8 @@ func cfgRecSize(sort string) int {
 		return cfgrec.ModemSize
 	case "PROTOCOL":
 		return cfgrec.ProtocolSize
+	case "CONFIG":
+		return 8192
 	default:
 		return 1024
 	}
@@ -73,6 +76,11 @@ func (q *vm) cfgOpen(rest string) {
 	if sort == "USERSIDX" && q.g != nil {
 		name = userbase.Path(q.g, cfgrec.UserBaseIdxName)
 	}
+	if sort == "CONFIG" && q.g != nil && q.g.CfgPath != "" {
+		name = q.g.CfgPath
+	} else if found := config.ExistingFile(q.g, name); found != "" {
+		name = found
+	}
 	if name == "" {
 		return
 	}
@@ -88,6 +96,12 @@ func (q *vm) cfgOpen(rest string) {
 		return
 	}
 	s.f = f
+	if sort == "CONFIG" {
+		if st, err := f.Stat(); err == nil && st.Size() > 0 {
+			s.size = int(st.Size())
+			s.buf = make([]byte, s.size)
+		}
+	}
 	q.cfg[slot] = s
 }
 
@@ -156,10 +170,64 @@ func (q *vm) cfgGet(slot, field int) string {
 	if s.sort == "USERSBBS" {
 		return mapUsersGet(s.buf, field)
 	}
+	if s.sort == "CONFIG" {
+		return q.cfgGetConfig(s, field)
+	}
 	if field == 1 {
 		return strings.TrimRight(pascal.FromCP437(s.buf), "\x00")
 	}
 	return ""
+}
+
+func (q *vm) cfgGetConfig(s *cfgSlot, field int) string {
+	c := cfgrec.ParseConfig(s.buf)
+	if q != nil && q.g != nil {
+		live := q.g.RaConfig
+		if strings.TrimSpace(c.SemPath) == "" {
+			c.SemPath = live.SemPath
+		}
+		if strings.TrimSpace(c.SysPath) == "" {
+			c.SysPath = live.SysPath
+		}
+		if strings.TrimSpace(c.MenuPath) == "" {
+			c.MenuPath = live.MenuPath
+		}
+		if strings.TrimSpace(c.TextPath) == "" {
+			c.TextPath = live.TextPath
+		}
+		if strings.TrimSpace(c.MsgBasePath) == "" {
+			c.MsgBasePath = live.MsgBasePath
+		}
+		if strings.TrimSpace(c.FileBase) == "" {
+			c.FileBase = live.FileBase
+		}
+		if strings.TrimSpace(c.SystemName) == "" {
+			c.SystemName = live.SystemName
+		}
+		if strings.TrimSpace(c.Sysop) == "" {
+			c.Sysop = live.Sysop
+		}
+	}
+	switch field {
+	case 26:
+		return pascal.ForceBack(c.MenuPath)
+	case 27:
+		return pascal.ForceBack(c.TextPath)
+	case 30:
+		return pascal.ForceBack(c.MsgBasePath)
+	case 31:
+		return pascal.ForceBack(c.SysPath)
+	case 43:
+		return c.SystemName
+	case 52:
+		return c.Sysop
+	case 189:
+		return pascal.ForceBack(c.SemPath)
+	case 191:
+		return pascal.ForceBack(c.FileBase)
+	default:
+		return ""
+	}
 }
 
 func (q *vm) cfgSet(slot, field int, val string) {

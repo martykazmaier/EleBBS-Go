@@ -1,11 +1,15 @@
 package menu
 
 import (
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"elebbs/internal/cfgrec"
+	"elebbs/internal/files"
 	"elebbs/internal/lang"
 	"elebbs/internal/logx"
 	"elebbs/internal/mail"
@@ -162,7 +166,7 @@ func (e *Engine) readMessages(data string) {
 }
 
 func (e *Engine) getReadType() byte {
-	if e.Line.AnsiOn {
+	if e.Line.AnsiOn || e.Line.AvatarOn {
 		res, ok := quest.Exec(e.T, e.G, e.Line, "READTYPE /N", quest.ScriptOpts{NoLog: true})
 		if ok {
 			res = pascal.UpCase(pascal.Trim(res))
@@ -348,8 +352,17 @@ func (e *Engine) showMessage(a cfgrec.MessageArea, art mail.Article, pause bool)
 	if pause {
 		script = "RDMSGPS"
 	}
-	dt := art.Date.Format("01-02-06")
-	tm := art.Date.Format("15:04")
+	dtFmt := byte(0)
+	if e.Line != nil {
+		dtFmt = e.Line.User.DateFormat
+	}
+	dt := lang.FormatDate(art.Date, dtFmt, e.T.Ral)
+	tm := art.Date.In(time.Local).Format("15:04")
+	subj := art.Subject
+	if art.FAttach {
+		subj = e.T.RalGet(lang.AttFiles2)
+	}
+	attr := e.attr2Str(art)
 	res, ran := quest.Exec(e.T, e.G, e.Line, script+" /N", quest.ScriptOpts{
 		NoLog: true,
 		Answers: map[int]string{
@@ -357,18 +370,18 @@ func (e *Engine) showMessage(a cfgrec.MessageArea, art mail.Article, pause bool)
 			2:  strconv.Itoa(art.Num),
 			3:  dt,
 			4:  tm,
-			5:  mail.AttrString(art),
+			5:  attr,
 			6:  art.From,
 			7:  "",
 			8:  art.To,
 			9:  "",
-			10: art.Subject,
+			10: subj,
 		},
 	})
 	_ = res
 	if !ran {
 		e.T.Println("")
-		e.T.WriteRA("`A15:" + e.T.RalGet(lang.Message) + " #" + strconv.Itoa(art.Num) + " - " + a.Name + "  " + mail.AttrString(art))
+		e.T.WriteRA("`A15:" + e.T.RalGet(lang.Message) + " #" + strconv.Itoa(art.Num) + " - " + a.Name + "  " + attr)
 		e.T.Println("")
 		e.T.WriteRA("`A14:" + e.T.RalGet(lang.Dt) + "`A10:" + dt + " " + tm)
 		e.T.Println("")
@@ -376,14 +389,18 @@ func (e *Engine) showMessage(a cfgrec.MessageArea, art mail.Article, pause bool)
 		e.T.Println("")
 		e.T.WriteRA("`A14:" + e.T.RalGet(lang.To3) + "`A11:" + art.To)
 		e.T.Println("")
-		e.T.WriteRA("`A14:" + e.T.RalGet(lang.Re) + "`A11:" + art.Subject)
+		if art.FAttach {
+			e.T.WriteRA("`A14:" + e.T.RalGet(lang.Re) + "`A15:" + subj)
+		} else {
+			e.T.WriteRA("`A14:" + e.T.RalGet(lang.Re) + "`A11:" + subj)
+		}
 		e.T.Println("")
 		e.T.Println("")
 	}
 	for _, ln := range strings.Split(strings.ReplaceAll(art.Body, "\r\n", "\n"), "\n") {
 		e.showMsgLine(ln)
 	}
-	return e.msgBar(a)
+	return e.msgBar(a, art)
 }
 
 func (e *Engine) showMsgLine(ln string) {
@@ -404,7 +421,7 @@ func (e *Engine) showMsgLine(ln string) {
 	}
 }
 
-func (e *Engine) msgBar(a cfgrec.MessageArea) int {
+func (e *Engine) msgBar(a cfgrec.MessageArea, art mail.Article) int {
 	cmd := ""
 	if mail.WriteAccessible(a, e.Line.User) {
 		if a.MsgKinds != cfgrec.MsgKindROnly && a.MsgKinds != cfgrec.MsgKindNoReply {
@@ -414,24 +431,173 @@ func (e *Engine) msgBar(a cfgrec.MessageArea) int {
 			cmd += "ENTER,"
 		}
 	}
+	hasFiles := art.FAttach
+	if hasFiles {
+		if cmd != "" {
+			cmd += ","
+		}
+		cmd += "FILEATTACH"
+	}
 	cmd = strings.Trim(cmd, ",")
-	if e.Line.AnsiOn {
+	if e.Line.AnsiOn || e.Line.AvatarOn {
 		res, ok := quest.Exec(e.T, e.G, e.Line, "MSGBAR "+cmd+" /N", quest.ScriptOpts{NoLog: true, Args: cmd})
 		if ok {
 			res = pascal.UpCase(pascal.Trim(res))
 			if res != "" {
+				if hasFiles && e.isFilesBarKey(res) {
+					e.listFAttach(a, art)
+					return mailAgain
+				}
 				return msgBarAction(res[0])
 			}
 		}
 	}
 	e.T.Println("")
-	e.T.WriteRA("`A14:[N]ext [L]ast [A]gain [R]eply [E]nter [S]top: ")
+	prompt := "`A14:[N]ext [L]ast [A]gain [R]eply [E]nter [S]top: "
+	if hasFiles {
+		prompt = "`A14:[N]ext [L]ast [A]gain [R]eply [E]nter [F]iles [S]top: "
+	}
+	e.T.WriteRA(prompt)
 	ch, err := e.T.GetKey(0)
 	e.T.Println("")
 	if err != nil {
 		return mailStop
 	}
-	return msgBarAction(pascal.UpCase(string(ch))[0])
+	up := pascal.UpCase(string(ch))[0]
+	if hasFiles && up == e.ralKey(lang.Files2, 'F') {
+		e.listFAttach(a, art)
+		return mailAgain
+	}
+	return msgBarAction(up)
+}
+
+func (e *Engine) isFilesBarKey(res string) bool {
+	if res == "" {
+		return false
+	}
+	if strings.Contains(res, "FILEATTACH") || strings.HasPrefix(res, "FILES") {
+		return true
+	}
+	return res[0] == e.ralKey(lang.Files2, 'F')
+}
+
+func (e *Engine) listFAttach(a cfgrec.MessageArea, art mail.Article) {
+	e.T.ClearScreen()
+	e.T.WriteRA("`A10:" + e.T.RalGet(lang.FilesAtt))
+	e.T.Println("")
+	e.T.WriteRA("`A15:")
+	e.T.Println("")
+	hdr := e.T.RalGet(lang.FileHdr)
+	if strings.TrimSpace(hdr) == "" {
+		hdr = "Filename      Size        Date"
+	}
+	e.T.WriteRA("`A14:" + hdr)
+	e.T.Println("")
+	e.T.WriteRA("`A14:-------------- ----------- -----------")
+	e.T.Println("")
+	paths := mail.AttachFiles(art.Subject)
+	n := 0
+	var sum int64
+	var tagged []files.Found
+	for _, p := range paths {
+		st, err := os.Stat(p)
+		if err != nil || st.IsDir() {
+			continue
+		}
+		n++
+		sum += st.Size()
+		name := filepath.Base(p)
+		if len(name) < 14 {
+			name += strings.Repeat(" ", 14-len(name))
+		}
+		e.T.WriteRA("`A11:" + name + " ")
+		e.T.WriteRA("`A10:`X16:" + strconv.FormatInt(st.Size(), 10))
+		e.T.WriteRA("`A9:`X28:" + st.ModTime().Format("01-02-06"))
+		e.T.Println("")
+		tagged = append(tagged, files.Found{
+			Hdr:  cfgrec.FilesHdr{Name: filepath.Base(p), Size: uint32(st.Size()), Attrib: 1 << 2},
+			Path: p,
+		})
+	}
+	e.T.WriteRA("`A14:-------------- ----------- ---------")
+	e.T.Println("")
+	if n == 0 {
+		e.T.WriteRA("`A12:")
+		e.T.Println(e.T.RalGet(lang.NoFiles1))
+		e.T.Println("")
+		e.T.PressEnter()
+		mail.ClearFAttach(a.JAMBase, art.Num)
+		return
+	}
+	e.T.WriteRA("`A15:" + strconv.Itoa(n) + " " + e.T.RalGet(lang.Files1) + "`X16:" + strconv.FormatInt(sum, 10) + " " + e.T.RalGet(lang.Bytes))
+	e.T.Println("")
+	e.T.Println("")
+	e.T.PressEnter()
+	e.T.WriteRA("`A12:")
+	e.T.Println("")
+	e.transferDownloads(tagged)
+	if e.canKillAttach(a, art) && e.T.AskYesNo(lang.CheckAtt, false) {
+		e.T.WriteRA("`A12:" + e.T.RalGet(lang.KillAtt))
+		e.T.Println("")
+		for _, f := range tagged {
+			_ = os.Remove(f.Path)
+		}
+		_ = os.Remove(strings.TrimRight(art.Subject, `\/`))
+		mail.ClearFAttach(a.JAMBase, art.Num)
+	}
+}
+
+func (e *Engine) canKillAttach(a cfgrec.MessageArea, art mail.Article) bool {
+	if e.Line == nil {
+		return false
+	}
+	u := e.Line.User
+	up := func(s string) string { return pascal.UpCase(pascal.Trim(s)) }
+	name := up(u.Name)
+	if name != "" && (name == up(art.From) || name == up(art.To)) {
+		return true
+	}
+	if e.G != nil && name != "" && name == up(e.G.RaConfig.Sysop) {
+		return true
+	}
+	return u.Security >= a.SysopSecurity && a.SysopSecurity > 0
+}
+
+// attr2Str is Pascal Attr2Str: RAL flags for RDMSG/RDMSGPS answer #5.
+func (e *Engine) attr2Str(art mail.Article) string {
+	var b strings.Builder
+	add := func(nr int) {
+		s := e.T.RalGet(nr)
+		if s == "" {
+			return
+		}
+		if b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(s)
+	}
+	if art.Private {
+		add(lang.Private2)
+	}
+	if art.Received {
+		add(lang.Received1)
+	}
+	if art.FAttach {
+		add(lang.FileAtt1)
+	}
+	if art.Attr&0x00000020 != 0 {
+		add(lang.KillSent1)
+	}
+	if art.Attr&0x00000100 != 0 {
+		add(lang.Crash1)
+	}
+	if art.Attr&0x00010000 != 0 {
+		add(lang.ReqRec1)
+	}
+	if art.Attr&0x00020000 != 0 {
+		add(lang.AuditReq)
+	}
+	return b.String()
 }
 
 func msgBarAction(ch byte) int {

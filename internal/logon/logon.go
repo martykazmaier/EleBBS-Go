@@ -212,38 +212,12 @@ func writeRalLn(t *term.IO, ral *lang.File, nr int) {
 }
 
 func ralYesNo(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, ral *lang.File, nr int) bool {
-	s := ral.Get(nr)
-	def := false
-	if n := len(s); n >= 2 {
-		last, prev := s[n-1], s[n-2]
-		letter := (prev >= 'A' && prev <= 'Z') || (prev >= 'a' && prev <= 'z')
-		if !letter {
-			switch last {
-			case 'Y', 'y':
-				def = true
-				s = s[:n-1]
-			case 'N', 'n':
-				s = s[:n-1]
-			}
-		}
-	}
-	t.WriteRA("`A14:" + s)
-	if quest.Kind(g, line, "YESNO") == "q-a" {
-		args := "NO /N"
-		if def {
-			args = "YES /N"
-		}
-		res, ok := quest.Exec(t, g, line, "YESNO", quest.ScriptOpts{Args: args, NoLog: true})
-		if ok {
-			switch pascal.UpCase(pascal.Trim(res)) {
-			case "YES":
-				return true
-			case "NO":
-				return false
-			}
-		}
-	}
-	return t.YesNo("", def)
+	_ = g
+	_ = line
+	save := t.Ral
+	t.Ral = ral
+	defer func() { t.Ral = save }()
+	return t.AskYesNo(nr, false)
 }
 
 func askLanguage(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg) {

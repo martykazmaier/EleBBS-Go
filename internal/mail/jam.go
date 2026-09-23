@@ -20,6 +20,7 @@ const (
 	jamPrivate    = 0x00000004
 	jamRcvd       = 0x00000008
 	jamSent       = 0x00000010
+	jamFAttach    = 0x00002000
 	jamTypeLocal  = 0x00800000
 	jamTypeEcho   = 0x01000000
 	jamTypeNet    = 0x02000000
@@ -43,6 +44,7 @@ type Article struct {
 	Received bool
 	Sent     bool
 	Private  bool
+	FAttach  bool
 	Attr     uint32
 }
 
@@ -100,6 +102,7 @@ func ReadJAM(base string) ([]Article, error) {
 			Received: attr&jamRcvd != 0,
 			Sent:     attr&jamSent != 0,
 			Private:  attr&jamPrivate != 0,
+			FAttach:  attr&jamFAttach != 0,
 			Attr:     attr,
 		}
 		if a.Num == 0 {

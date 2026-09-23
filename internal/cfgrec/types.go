@@ -578,6 +578,9 @@ type MessageArea struct {
 
 func (m MessageArea) IsJAM() bool { return m.Attribute&(1<<7) != 0 }
 
+// AllowsAttach is MESSAGES.RA Attribute bit 2 (file attaches).
+func (m MessageArea) AllowsAttach() bool { return m.Attribute&(1<<2) != 0 }
+
 type Group struct {
 	AreaNum  uint16
 	Name     string

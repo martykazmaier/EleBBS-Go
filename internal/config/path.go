@@ -44,6 +44,7 @@ func PathCandidates(g *cfgrec.GlobalCfg, spec string, extra ...string) []string 
 	roots := extra
 	if g != nil {
 		roots = append(roots,
+			g.RaConfig.SemPath,
 			g.RaConfig.SysPath,
 			g.RaConfig.TextPath,
 			g.RaConfig.MenuPath,

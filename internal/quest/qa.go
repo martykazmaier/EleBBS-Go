@@ -13,6 +13,7 @@ import (
 	"elebbs/internal/cfgrec"
 	"elebbs/internal/config"
 	"elebbs/internal/logx"
+	"elebbs/internal/online"
 	"elebbs/internal/pascal"
 	"elebbs/internal/term"
 )
@@ -402,6 +403,9 @@ func (q *vm) exec(raw string) {
 			if max <= 0 {
 				max = 40
 			}
+			if q.t != nil {
+				q.t.DrainLineEnds()
+			}
 			s, _ := q.t.GetString(max, hidden, q.cap)
 			q.put(dst, s)
 		}
@@ -616,12 +620,16 @@ func (q *vm) cmdFileOpen(rest string) {
 	if q.t != nil {
 		spec = q.t.ExpandRA(spec)
 	}
+	spec = online.ResolveSemaFile(q.g, spec)
 	q.closeSlot(slot)
 	if spec == "" {
 		q.fileRes[slot] = "NO"
 		return
 	}
 	extra := []string{q.quesDir}
+	if q.g != nil {
+		extra = append(extra, q.g.RaConfig.SemPath, q.g.RaConfig.SysPath)
+	}
 	if q.line != nil {
 		extra = append(extra, q.line.Language.TextPath, q.line.Language.QuesPath)
 	}
@@ -693,7 +701,7 @@ func (q *vm) cmdFileWrite(rest string) {
 		return
 	}
 	val = q.value(val)
-	_, _ = q.files[slot].f.WriteString(val + "\r\n")
+	_, _ = q.files[slot].f.Write(append(pascal.ToCP437(val), '\r', '\n'))
 }
 
 func (q *vm) closeSlot(slot int) {

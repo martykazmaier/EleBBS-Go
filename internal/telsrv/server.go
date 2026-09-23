@@ -14,6 +14,7 @@ import (
 	"elebbs/internal/cfgrec"
 	"elebbs/internal/config"
 	"elebbs/internal/logx"
+	"elebbs/internal/online"
 	"elebbs/internal/pascal"
 )
 
@@ -73,10 +74,6 @@ func ListenAndSpawn(g *cfgrec.GlobalCfg) error {
 	var alive int32
 	var mu sync.Mutex
 	inUse := map[int]bool{}
-	next := int(tn.StartNodeWith)
-	if next < 1 {
-		next = 1
-	}
 	max := int(tn.MaxSessions)
 	if max <= 0 {
 		max = 10
@@ -92,21 +89,14 @@ func ListenAndSpawn(g *cfgrec.GlobalCfg) error {
 			continue
 		}
 		mu.Lock()
-		node := next
-		for inUse[node] {
-			node++
-			if node > 255 {
-				node = int(tn.StartNodeWith)
-				if node < 1 {
-					node = 1
-				}
-			}
-			if node == next {
-				break
-			}
+		node := online.FirstFree(int(tn.StartNodeWith), max, inUse)
+		if node == 0 {
+			mu.Unlock()
+			_, _ = c.Write([]byte("BUSY\r\n"))
+			_ = c.Close()
+			continue
 		}
 		inUse[node] = true
-		next = node + 1
 		mu.Unlock()
 		atomic.AddInt32(&alive, 1)
 		go func(conn net.Conn, node int) {

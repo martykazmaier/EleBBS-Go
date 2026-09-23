@@ -63,6 +63,60 @@ func (r Record) DisplayLine() string {
 	return strconv.Itoa(int(r.Line))
 }
 
+// FirstFree is Pascal FindEmptyNode: lowest unused node from StartNodeWith.
+func FirstFree(start, maxSessions int, inUse map[int]bool) int {
+	if start < 1 {
+		start = 1
+	}
+	if maxSessions < 1 {
+		maxSessions = 1
+	}
+	end := start + maxSessions - 1
+	if end > 255 {
+		end = 255
+	}
+	for n := start; n <= end; n++ {
+		if inUse == nil || !inUse[n] {
+			return n
+		}
+	}
+	return 0
+}
+
+// EmptyNodeNr is Pascal EmptyNodeNr: first USERON.BBS hole, else append.
+func EmptyNodeNr(g *cfgrec.GlobalCfg, eleweb bool) int {
+	start := 1
+	if eleweb {
+		start = WebNodeBase
+	}
+	b, err := os.ReadFile(Path(g))
+	if err != nil || len(b) < RecordSize {
+		return start
+	}
+	n := len(b) / RecordSize
+	from := 0
+	if eleweb {
+		from = WebNodeBase - 1
+		if from < 0 {
+			from = 0
+		}
+	}
+	for i := from; i < n; i++ {
+		rec := Decode(b[i*RecordSize : (i+1)*RecordSize])
+		if pascal.Trim(rec.Name) == "" || (rec.Line == 0 && rec.NodeNumber == 0) {
+			return i + 1
+		}
+	}
+	next := n + 1
+	if eleweb && next <= WebNodeBase {
+		next = WebNodeBase + 1
+	}
+	if next < start {
+		return start
+	}
+	return next
+}
+
 func Path(g *cfgrec.GlobalCfg) string {
 	if g == nil {
 		return "useron.bbs"
@@ -122,7 +176,7 @@ func ReadAll(g *cfgrec.GlobalCfg) []Record {
 	n := len(b) / RecordSize
 	out := make([]Record, 0, n)
 	for i := 0; i < n; i++ {
-		out = append(out, Decode(b[i*RecordSize : (i+1)*RecordSize]))
+		out = append(out, Decode(b[i*RecordSize:(i+1)*RecordSize]))
 	}
 	return out
 }
@@ -188,13 +242,6 @@ func Kill(g *cfgrec.GlobalCfg, line *cfgrec.LineCfg) {
 	}
 	node := line.RaNodeNr
 	if node < 1 {
-		return
-	}
-	rec, ok := ReadSlot(g, node)
-	if !ok {
-		return
-	}
-	if pascal.UpCase(rec.Name) != pascal.UpCase(line.User.Name) {
 		return
 	}
 	_ = writeSlot(Path(g), node, Record{})

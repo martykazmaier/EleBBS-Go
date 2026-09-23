@@ -3,11 +3,8 @@ package bbs
 import (
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
-	"strings"
-	"time"
 
 	"elebbs/internal/cfgrec"
 	"elebbs/internal/cmdline"
@@ -21,6 +18,7 @@ import (
 	"elebbs/internal/mail"
 	"elebbs/internal/menu"
 	"elebbs/internal/online"
+	"elebbs/internal/pascal"
 	"elebbs/internal/quest"
 	"elebbs/internal/term"
 )
@@ -42,6 +40,9 @@ func New(g *cfgrec.GlobalCfg, opt cmdline.Options) *Session {
 	line.Modem = config.LoadModem(g, opt.Node)
 	line.Telnet = config.LoadTelnet(g)
 	cmdline.Apply(line, opt)
+	if opt.AutoNode {
+		line.RaNodeNr = online.EmptyNodeNr(g, false)
+	}
 	if line.RaNodeNr < 1 {
 		line.RaNodeNr = 1
 	}
@@ -101,10 +102,34 @@ func (s *Session) RunOn(st comm.Stream) error {
 	t.RunScript = func(name, args string) {
 		quest.Run(t, s.G, s.Line, name, args)
 	}
+	t.YesNoQuest = func(defYes bool) (bool, bool) {
+		if quest.Kind(s.G, s.Line, "YESNO") != "q-a" {
+			return false, false
+		}
+		args := "NO /N"
+		if defYes {
+			args = "YES /N"
+		}
+		res, ok := quest.Exec(t, s.G, s.Line, "YESNO", quest.ScriptOpts{Args: args, NoLog: true})
+		if !ok {
+			return false, false
+		}
+		switch pascal.UpCase(pascal.Trim(res)) {
+		case "YES":
+			return true, true
+		case "NO":
+			return true, false
+		}
+		return false, false
+	}
 	t.RunMenu = func(typ byte, data string) {
 		eng.ExecType(typ, data)
 	}
 	s.Line.AnsiOn = true
+	online.ClearNodeMsg(s.G, s.Line.RaNodeNr)
+	online.SetRaBusy(s.G, s.Line.RaNodeNr, true)
+	defer online.SetRaBusy(s.G, s.Line.RaNodeNr, false)
+	defer online.Kill(s.G, s.Line)
 	localScreen(s, fmt.Sprintf("%sIncoming session node %d (%s)", cfgrec.SystemMsgPrefix, s.Line.RaNodeNr, mode(s)))
 	logx.Write(s.G, s.Line.RaNodeNr, '+', "Node started")
 	if !logon.Perform(t, s.G, s.Line) {
@@ -113,7 +138,6 @@ func (s *Session) RunOn(st comm.Stream) error {
 	}
 	t.Ral = lang.Load(s.G, s.Line.Language)
 	eng.Enter()
-	online.Kill(s.G, s.Line)
 	t.Println("")
 	t.WriteRA("`A14:Goodbye from " + s.G.RaConfig.SystemName + "`A7:\r\n")
 	term.DisplayHotFile(t, s.G.RaConfig.TextPath, "goodbye")
@@ -139,58 +163,6 @@ func localScreen(s *Session, msg string) {
 		fmt.Fprintln(os.Stderr, msg)
 	}
 }
-
-func ListenAndServe(g *cfgrec.GlobalCfg, opt cmdline.Options) error {
-	s := New(g, opt)
-	port := int(s.Line.Telnet.ServerPort)
-	addr := opt.Listen
-	if addr == "" {
-		if port <= 0 {
-			port = 23
-		}
-		addr = fmt.Sprintf(":%d", port)
-	}
-	if !strings.Contains(addr, ":") {
-		addr = ":" + addr
-	}
-	if err := commInit(); err != nil {
-		return err
-	}
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return err
-	}
-	defer ln.Close()
-	fmt.Fprintf(os.Stderr, "%s%s listening on %s\n", cfgrec.SystemMsgPrefix, cfgrec.PidName, addr)
-	node := s.Line.Telnet.StartNodeWith
-	if node < 1 {
-		node = 1
-	}
-	for {
-		c, err := ln.Accept()
-		if err != nil {
-			return err
-		}
-		n := int(node)
-		node++
-		go func(conn net.Conn, node int) {
-			defer conn.Close()
-			_ = conn.SetDeadline(time.Time{})
-			opt2 := opt
-			opt2.Node = node
-			opt2.Local = false
-			opt2.TelnetServ = true
-			sess := New(g, opt2)
-			sess.Line.LocalLogon = false
-			sess.Line.Baud = 11520
-			sess.Line.ConnectStr = "115200/TELNET"
-			st := comm.NewTelnet(comm.FromConn(conn))
-			_ = sess.RunOn(st)
-		}(c, n)
-	}
-}
-
-func commInit() error { return nil }
 
 func ExeDir() string {
 	p, err := os.Executable()

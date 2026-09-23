@@ -75,6 +75,8 @@ func Load(sysHint, exeDir string) (*cfgrec.GlobalCfg, error) {
 	g.RaConfig.TextPath = pascal.ForceBack(g.RaConfig.TextPath)
 	g.RaConfig.MenuPath = pascal.ForceBack(g.RaConfig.MenuPath)
 	g.RaConfig.FileBase = pascal.ForceBack(g.RaConfig.FileBase)
+	g.RaConfig.SemPath = pascal.ForceBack(g.RaConfig.SemPath)
+	g.RaConfig.AttachPath = pascal.ForceBack(g.RaConfig.AttachPath)
 	if ele := FindFile([]string{base, g.RaConfig.SysPath}, "config.ele", "CONFIG.ELE"); ele != "" {
 		g.ElePath = ele
 		if b, err := os.ReadFile(ele); err == nil {

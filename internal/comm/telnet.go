@@ -3,8 +3,10 @@ package comm
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
@@ -48,6 +50,9 @@ func (t *Telnet) Read(p []byte) (int, error) {
 		if err != nil {
 			if n > 0 {
 				return n, nil
+			}
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				t.r = bufio.NewReaderSize(t.s, 4096)
 			}
 			return 0, err
 		}

@@ -649,3 +649,119 @@ func TestBBSSendMessageWritesNodeRA(t *testing.T) {
 		t.Fatalf("pascal header missing: %q", b)
 	}
 }
+
+func TestWhosOnlineNodeEnterAsksForMessage(t *testing.T) {
+	dir := t.TempDir()
+	src := "" +
+		":WHOSONLINE\r\n" +
+		"ask 5 34\r\n" +
+		"If 34 = \"\"\r\n" +
+		`Display "EMPTYNODE"` + "\r\n" +
+		"Quit\r\n" +
+		"EndIf\r\n" +
+		"Assign 5 1\r\n" +
+		"Assign 11 X\r\n" +
+		"While 11 <> \"\" do\r\n" +
+		"GetRecordInfo #5 10 DOWN\r\n" +
+		"If 11 = \"\"\r\n" +
+		"BREAK\r\n" +
+		"EndIf\r\n" +
+		"If 12 = #34\r\n" +
+		"BREAK\r\n" +
+		"EndIf\r\n" +
+		"Assign 5 #17\r\n" +
+		"Inc 5\r\n" +
+		"EndWhile\r\n" +
+		"If 12 <> #34\r\n" +
+		`Display "NOONE"` + "\r\n" +
+		"Quit\r\n" +
+		"EndIf\r\n" +
+		"ask 40 37\r\n" +
+		"Length 36 37\r\n" +
+		"If 36 = 0\r\n" +
+		`Display "MSGABORT"` + "\r\n" +
+		"Quit\r\n" +
+		"EndIf\r\n" +
+		`Display "GOTMSG "` + "\r\n" +
+		"Display 37\r\n" +
+		"Quit\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "whonline.q-a"), []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	n1 := &cfgrec.LineCfg{AnsiOn: true, RaNodeNr: 1, Baud: 65529, User: cfgrec.User{Name: "Sysop", Handle: "Sysop", Location: "Here", Record: -1}}
+	n2 := &cfgrec.LineCfg{AnsiOn: true, RaNodeNr: 2, Baud: 65529, User: cfgrec.User{Name: "Martin", Handle: "Shurato", Location: "Calgary", Record: -1}}
+	if err := online.Write(g, n1, "", online.StatusBrowsing); err != nil {
+		t.Fatal(err)
+	}
+	if err := online.Write(g, n2, "", online.StatusBrowsing); err != nil {
+		t.Fatal(err)
+	}
+	line := *n2
+	line.Language.QuesPath = dir
+	st := &seqStream{in: []byte("2\r\nhello\r")}
+	tio := term.New(st, g, &line)
+	eng := &Engine{T: tio, G: g, Line: &line}
+	if !eng.ExecType(52, "") {
+		t.Fatal("type 52")
+	}
+	out := st.out.Bytes()
+	if bytes.Contains(out, []byte("NOONE")) {
+		t.Fatalf("node 2 not found: %q", out)
+	}
+	if bytes.Contains(out, []byte("MSGABORT")) || bytes.Contains(out, []byte("EMPTYNODE")) {
+		t.Fatalf("compose aborted after node number: %q", out)
+	}
+	if !bytes.Contains(out, []byte("GOTMSG")) || !bytes.Contains(out, []byte("hello")) {
+		t.Fatalf("message ASK not run after node number, out=%q", out)
+	}
+}
+
+func TestCheckNodeMsgShowsRAFileFromSemPath(t *testing.T) {
+	sys := t.TempDir()
+	sem := t.TempDir()
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = sys
+	g.RaConfig.SemPath = sem
+	if err := online.AppendNodeMsg(g, 2, "Shurato", 1, []string{"hello remote"}); err != nil {
+		t.Fatal(err)
+	}
+	if p := online.FindNodeFile(g, 2); p == "" || filepath.Dir(p) != sem {
+		t.Fatalf("NODE.RA not in SemPath: %q", online.FindNodeFile(g, 2))
+	}
+	st := &seqStream{in: []byte("\r")}
+	line := &cfgrec.LineCfg{AnsiOn: true, RaNodeNr: 2}
+	tio := term.New(st, g, line)
+	eng := &Engine{T: tio, G: g, Line: line}
+	eng.checkNodeMsg()
+	out := st.out.Bytes()
+	if !bytes.Contains(out, []byte("hello remote")) {
+		t.Fatalf("inbound node msg not shown: %q", out)
+	}
+	if online.FindNodeFile(g, 2) != "" {
+		t.Fatal("NODE.RA should be cleared after display")
+	}
+}
+
+func TestCheckNodeMsgShowsRAFile(t *testing.T) {
+	dir := t.TempDir()
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	if err := online.AppendNodeMsg(g, 2, "Shurato", 1, []string{"hello remote"}); err != nil {
+		t.Fatal(err)
+	}
+	st := &seqStream{in: []byte("\r")}
+	line := &cfgrec.LineCfg{AnsiOn: true, RaNodeNr: 2}
+	tio := term.New(st, g, line)
+	eng := &Engine{T: tio, G: g, Line: line}
+	eng.checkNodeMsg()
+	out := st.out.Bytes()
+	if !bytes.Contains(out, []byte("hello remote")) {
+		t.Fatalf("inbound node msg not shown: %q", out)
+	}
+	if online.FindNodeFile(g, 2) != "" {
+		t.Fatal("NODE.RA should be cleared after display")
+	}
+}

@@ -15,9 +15,9 @@ func TestParseLocalNode(t *testing.T) {
 	if o.InheritedHandle != 204 || o.Node != 3 {
 		t.Fatalf("handle %+v", o)
 	}
-	o = Parse([]string{"-XT", "-LISTEN=:2323"}, true)
-	if !o.TelnetServ || o.Listen != ":2323" {
-		t.Fatalf("listen %+v", o)
+	o = Parse([]string{"-XT"}, true)
+	if !o.TelnetServ {
+		t.Fatalf("telnet %+v", o)
 	}
 	o = Parse([]string{"-?"}, true)
 	if !o.ShowHelp {

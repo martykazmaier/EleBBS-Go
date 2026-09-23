@@ -381,7 +381,13 @@ func ScanMsgArea(g *cfgrec.GlobalCfg, areaNum int, outPath, emailHost string) er
 		}
 		body := strings.ReplaceAll(msg.Body, "\n", "\r\n")
 		b.WriteString(body)
-		_ = AddMsgToBase(outPath, el.GroupName, int(a.AreaNum), -1, []byte(b.String()), false)
+		raw := []byte(b.String())
+		if msg.FAttach {
+			if files := listAttachFiles(msg.Subject); len(files) > 0 {
+				raw = mimeAttachFiles(raw, files)
+			}
+		}
+		_ = AddMsgToBase(outPath, el.GroupName, int(a.AreaNum), -1, raw, false)
 		SetSent(base, n)
 	}
 	return nil
@@ -400,6 +406,7 @@ func ProcessNewArticles(g *cfgrec.GlobalCfg, path string) error {
 		return nil
 	}
 	areas := LoadAll(g)
+	eles := LoadEleMessages(g)
 	tossed := 0
 	lastName := ""
 	areaCnt := 0
@@ -417,7 +424,8 @@ func ProcessNewArticles(g *cfgrec.GlobalCfg, path string) error {
 		}
 		lastName = art.GroupName
 		areaCnt++
-		if err := tossArticle(g, a, art); err != nil {
+		el, _ := FindEle(eles, a.AreaNum)
+		if err := tossArticle(g, a, art, el.AttachArea); err != nil {
 			logx.Write(g, 0, '!', "Toss: "+err.Error())
 		}
 		tossed++
@@ -426,11 +434,13 @@ func ProcessNewArticles(g *cfgrec.GlobalCfg, path string) error {
 	logx.Write(g, 0, '>', fmt.Sprintf("Tossing completed (%d articles processed)", tossed))
 	fmt.Printf("   (%d messages processed)\n", tossed)
 	_ = os.Remove(path)
+	removeDszLogFile(attachRoot(g))
 	return nil
 }
 
-func tossArticle(g *cfgrec.GlobalCfg, area cfgrec.MessageArea, art NewsArticle) error {
+func tossArticle(g *cfgrec.GlobalCfg, area cfgrec.MessageArea, art NewsArticle, attachArea int32) error {
 	body := nulTrim(art.Body)
+	body, attachDir, hasAtt := processInboundAttach(g, attachArea, body)
 	to, from, subj, reply, msgid, dateField, text := splitRFC822(body)
 	if art.Email() {
 		to = art.GroupName
@@ -443,6 +453,9 @@ func tossArticle(g *cfgrec.GlobalCfg, area cfgrec.MessageArea, art NewsArticle) 
 	}
 	if subj == "" {
 		subj = art.GroupName
+	}
+	if hasAtt && attachDir != "" {
+		subj = attachDir
 	}
 	if u, ok := userbase.Search(g, to); ok && pascal.Trim(u.ForwardTo) != "" {
 		to = u.ForwardTo
@@ -457,6 +470,10 @@ func tossArticle(g *cfgrec.GlobalCfg, area cfgrec.MessageArea, art NewsArticle) 
 		reply = strings.Trim(reply, "<>")
 		kl = append(kl, "REPLY: 0:0/0 "+reply)
 	}
+	attr := uint32(jamLocal | jamTypeLocal | jamSent)
+	if hasAtt {
+		attr |= jamFAttach
+	}
 	_, err := AppendMsg(jamBase(area.JAMBase), Article{
 		From:    from,
 		To:      to,
@@ -467,7 +484,8 @@ func tossArticle(g *cfgrec.GlobalCfg, area cfgrec.MessageArea, art NewsArticle) 
 		Body:    text,
 		Kludges: kl,
 		Private: art.Email(),
-		Attr:    jamLocal | jamTypeLocal | jamSent,
+		FAttach: hasAtt,
+		Attr:    attr,
 		Sent:    true,
 	})
 	return err

@@ -8,8 +8,8 @@ import (
 
 	"elebbs/internal/crc"
 	"elebbs/internal/door"
-	"elebbs/internal/lang"
 	"elebbs/internal/logx"
+	"elebbs/internal/online"
 	"elebbs/internal/pascal"
 	"elebbs/internal/userbase"
 )
@@ -49,6 +49,7 @@ func (q *vm) cmdExtra(cmd, rest string) {
 		q.cmdSubstring(rest, true)
 	case "FILEDELETE":
 		p := q.value(strings.TrimSpace(rest))
+		p = online.ResolveSemaFile(q.g, p)
 		_ = os.Remove(p)
 	case "FILERESULT":
 		w := strings.Fields(rest)
@@ -173,11 +174,12 @@ func (q *vm) cmdExtra(cmd, rest string) {
 	case "DISPLAYLOCAL":
 		q.t.WriteRA(q.makeDisplayStr(rest))
 	case "DOCONTINUE":
+		// Pascal: StopMore → NO, else YES. It does not ask "Is this correct?"
 		dst := atoi(strings.TrimSpace(rest))
-		if q.t.AskYesNo(lang.Correct, true) {
-			q.put(dst, "YES")
-		} else {
+		if q.t != nil && q.t.StopMore {
 			q.put(dst, "NO")
+		} else {
+			q.put(dst, "YES")
 		}
 	case "EXEC":
 		q.cmdExec(rest)
@@ -258,10 +260,17 @@ func (q *vm) cmdExtra(cmd, rest string) {
 			q.line.User.Comment = q.value(strings.TrimSpace(rest))
 			_ = userbase.Write(q.g, q.line.User)
 		}
-	case "SETOLM", "SETCHATREASON", "SETCHATWANTED", "SETSTATUSBAR", "SETUSERON":
-		// node status / OLM — recorded in the log
+	case "SETOLM", "SETCHATREASON", "SETCHATWANTED", "SETSTATUSBAR":
 		if q.g != nil && q.line != nil {
 			logx.Write(q.g, q.line.RaNodeNr, '>', cmd+" "+q.value(rest))
+		}
+	case "SETUSERON":
+		if q.g != nil && q.line != nil {
+			desc := q.value(strings.TrimSpace(rest))
+			if q.t != nil {
+				desc = q.t.ExpandRA(desc)
+			}
+			_ = online.Write(q.g, q.line, desc, online.StatusBrowsing)
 		}
 	case "SETSECURITY":
 		if q.line != nil {

@@ -1,6 +1,7 @@
 package menu
 
 import (
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -74,6 +75,7 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 	}
 	e.T.ClearScreen()
 	e.T.WriteRA("`A3:")
+	e.T.Println("")
 	kind := areaTypeName(e, a)
 	if reply {
 		e.T.WriteRA(e.T.RalGet(lang.Replying))
@@ -81,6 +83,7 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 		e.T.WriteRA(e.T.RalGet(lang.Posting))
 	}
 	e.T.WriteRA(" " + kind + " " + e.T.RalGet(lang.Area) + ` "` + a.Name + `".`)
+	e.T.Println("")
 	e.T.Println("")
 	e.T.WriteRA("`A14:" + e.T.RalGet(lang.From1) + "`A3:" + from)
 	e.T.Println("")
@@ -136,6 +139,26 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 		e.T.PressEnter()
 		return false
 	}
+
+	fAttach := false
+	if a.AllowsAttach() && e.T.AskYesNo(lang.AttFiles1, false) {
+		dir := mail.CreateAttachDir(e.G, e.Line.RaNodeNr)
+		if dir == "" {
+			logx.Write(e.G, e.Line.RaNodeNr, '!', "Unable to create attach directory!")
+		} else {
+			logx.Write(e.G, e.Line.RaNodeNr, '>', "Following message has files attached:")
+			n := e.uploadAttach(dir)
+			if n == 0 {
+				logx.Write(e.G, e.Line.RaNodeNr, '!', "Did not receive any attaches, directory removed")
+				_ = os.Remove(strings.TrimRight(dir, `\/`))
+			} else {
+				fAttach = true
+				subj = pascal.ForceBack(dir)
+			}
+			logx.Write(e.G, e.Line.RaNodeNr, '>', "End of file attaches")
+		}
+	}
+
 	if !a.IsJAM() || a.JAMBase == "" {
 		e.T.Println("Hudson/Squish posting is not ported yet in this Go node.")
 		e.T.PressEnter()
@@ -165,6 +188,7 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 		Date:    time.Now(),
 		Body:    body,
 		Private: priv,
+		FAttach: fAttach,
 		Attr:    attr,
 		Kludges: []string{
 			"PID: " + cfgrec.PidName,
@@ -258,6 +282,8 @@ func areaTypeName(e *Engine, a cfgrec.MessageArea) string {
 		return e.T.RalGet(lang.Internet)
 	case cfgrec.MsgNews:
 		return e.T.RalGet(lang.NewsGrp)
+	case cfgrec.MsgForum:
+		return e.T.RalGet(lang.ForumGrp)
 	default:
 		return e.T.RalGet(lang.Local1)
 	}

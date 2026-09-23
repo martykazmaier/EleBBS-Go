@@ -19,19 +19,22 @@ import (
 )
 
 type IO struct {
-	S             comm.Stream
-	Cfg           *cfgrec.GlobalCfg
-	Line          *cfgrec.LineCfg
-	MorePrompt    bool
-	Lines         int
-	StopMore      bool
-	Width         int
-	Length        int
-	Attr          byte
-	mu            sync.Mutex
-	push          []byte
-	RunScript     func(name, args string)
-	RunMenu       func(typ byte, data string)
+	S          comm.Stream
+	Cfg        *cfgrec.GlobalCfg
+	Line       *cfgrec.LineCfg
+	MorePrompt bool
+	Lines      int
+	StopMore   bool
+	Width      int
+	Length     int
+	Attr       byte
+	mu         sync.Mutex
+	push       []byte
+	RunScript  func(name, args string)
+	RunMenu    func(typ byte, data string)
+	// YesNoQuest is Pascal YesNoAsk's YESNO.Q-A path. handled true means
+	// the script returned YES or NO; otherwise AskYesNo falls back to brackets.
+	YesNoQuest    func(defYes bool) (handled bool, yes bool)
 	Ral           *lang.File
 	hotDisplay    bool
 	hotKeys       map[byte]struct{}
@@ -546,7 +549,7 @@ func (t *IO) collectString(max int, hidden, capitalize, iemsi bool) (string, err
 			return string(b), err
 		}
 		switch ch {
-		case '\r', '\n':
+		case '\r':
 			t.eatLineEndMate(ch)
 			t.WriteRaw([]byte("\r\n"))
 			t.Lines++
@@ -555,6 +558,8 @@ func (t *IO) collectString(max int, hidden, capitalize, iemsi bool) (string, err
 				s = titleCase(s)
 			}
 			return s, nil
+		case '\n':
+			continue
 		case 8, 127:
 			if len(b) > 0 {
 				b = b[:len(b)-1]
@@ -705,11 +710,39 @@ func (t *IO) RalKeys(nr int) string {
 }
 
 func (t *IO) AskYesNo(ralNr int, def bool) bool {
-	t.WriteRA(t.RalGet(ralNr))
-	keys := t.RalKeys(lang.Yes) + t.RalKeys(lang.No)
-	if keys == "" {
-		keys = "YN"
+	s := t.RalGet(ralNr)
+	s, def = stripRalYesNo(s, def)
+	t.WriteRA("`A14:" + s)
+	if t.Line != nil && (t.Line.AnsiOn || t.Line.AvatarOn) && t.YesNoQuest != nil {
+		if ok, yes := t.YesNoQuest(def); ok {
+			return yes
+		}
 	}
+	return t.yesNoAsk(def)
+}
+
+// stripRalYesNo is Pascal RalStrYesNoAsk: the last Y/N of a yes/no
+// language prompt is the default and is not displayed.
+func stripRalYesNo(s string, def bool) (string, bool) {
+	n := len(s)
+	if n < 2 {
+		return s, def
+	}
+	last, prev := s[n-1], s[n-2]
+	letter := (prev >= 'A' && prev <= 'Z') || (prev >= 'a' && prev <= 'z')
+	if letter {
+		return s, def
+	}
+	switch last {
+	case 'Y', 'y':
+		return s[:n-1], true
+	case 'N', 'n':
+		return s[:n-1], false
+	}
+	return s, def
+}
+
+func (t *IO) yesNoAsk(def bool) bool {
 	y := byte('Y')
 	n := byte('N')
 	if k := t.RalKeys(lang.Yes); k != "" {
@@ -718,31 +751,55 @@ func (t *IO) AskYesNo(ralNr int, def bool) bool {
 	if k := t.RalKeys(lang.No); k != "" {
 		n = pascal.UpCase(k)[0]
 	}
+	left, right := "[", "]"
+	if t.Cfg != nil {
+		if t.Cfg.RaConfig.LeftBracket != 0 {
+			left = string(t.Cfg.RaConfig.LeftBracket)
+		}
+		if t.Cfg.RaConfig.RightBracket != 0 {
+			right = string(t.Cfg.RaConfig.RightBracket)
+		}
+	}
+	slash := t.RalGet(lang.Slash)
+	if slash == "" {
+		slash = "/"
+	}
+	var br string
 	if def {
-		t.Print(" [" + string(y) + "/" + strings.ToLower(string(n)) + "]? ")
+		br = " " + left + string(y) + slash + strings.ToLower(string(n)) + right + "? "
 	} else {
-		t.Print(" [" + strings.ToLower(string(y)) + "/" + string(n) + "]? ")
+		br = " " + left + strings.ToLower(string(y)) + slash + string(n) + right + "? "
 	}
-	ch, err := t.GetKey(0)
-	t.WriteRaw([]byte("\r\n"))
-	if err != nil {
-		return def
-	}
-	up := pascal.UpCase(string(ch))
-	if up == "" {
-		return def
-	}
-	c := up[0]
-	if c == y {
-		return true
-	}
-	if c == n {
+	t.Print(br)
+	for {
+		ch, err := t.GetKey(0)
+		if err != nil {
+			return def
+		}
+		up := pascal.UpCase(string(ch))
+		if up == "" {
+			continue
+		}
+		c := up[0]
+		yes := c == y
+		no := c == n
+		enter := c == '\r' || c == '\n'
+		if !yes && !no && !enter {
+			continue
+		}
+		if enter {
+			yes = def
+			no = !def
+		}
+		if yes {
+			t.WriteRA(t.RalStr(lang.Yes))
+			t.WriteRaw([]byte("\r\n"))
+			return true
+		}
+		t.WriteRA(t.RalStr(lang.No))
+		t.WriteRaw([]byte("\r\n"))
 		return false
 	}
-	if c == '\r' || c == '\n' {
-		return def
-	}
-	return def
 }
 
 func (t *IO) YesNo(prompt string, def bool) bool {

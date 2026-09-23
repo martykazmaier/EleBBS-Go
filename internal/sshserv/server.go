@@ -21,6 +21,7 @@ import (
 	"elebbs/internal/comm"
 	"elebbs/internal/config"
 	"elebbs/internal/logx"
+	"elebbs/internal/online"
 	"elebbs/internal/telsrv"
 	"elebbs/internal/userbase"
 	"golang.org/x/crypto/ssh"
@@ -72,7 +73,6 @@ func Listen(cfg Config) error {
 	var alive int32
 	var mu sync.Mutex
 	inUse := map[int]bool{}
-	next := startNode
 
 	for {
 		c, err := ln.Accept()
@@ -84,21 +84,13 @@ func Listen(cfg Config) error {
 			continue
 		}
 		mu.Lock()
-		node := next
-		for inUse[node] {
-			node++
-			if node > 255 {
-				node = startNode
-			}
-			if node == next {
-				break
-			}
+		node := online.FirstFree(startNode, max, inUse)
+		if node == 0 {
+			mu.Unlock()
+			_ = c.Close()
+			continue
 		}
 		inUse[node] = true
-		next = node + 1
-		if next > 255 {
-			next = startNode
-		}
 		mu.Unlock()
 		atomic.AddInt32(&alive, 1)
 		go func(conn net.Conn, node int) {
