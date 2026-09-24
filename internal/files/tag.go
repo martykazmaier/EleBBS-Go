@@ -113,7 +113,7 @@ func DisplayName(g *cfgrec.GlobalCfg, areas []cfgrec.FilesArea, t TagFile) strin
 	if idx < 0 || idx >= len(ents) {
 		return name
 	}
-	if n := strings.TrimSpace(ents[idx].Hdr.Name); n != "" {
+	if n := LongName(g, a, ents[idx].Hdr); n != "" {
 		return n
 	}
 	return name
@@ -137,11 +137,23 @@ func TagListFile(dir string) string {
 	return p
 }
 
-func SaveTagList(dir string, tags []TagFile) error {
-	p := TagListFile(dir)
-	if len(tags) == 0 {
-		return os.WriteFile(p, nil, 0644)
+// ClearTagList is Pascal tTagFileObj.ClearTagList: erase taglist.ra.
+func ClearTagList(dir string) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		dir = "."
 	}
+	for _, n := range []string{TagListName, "TAGLIST.RA"} {
+		_ = os.Remove(filepath.Join(dir, n))
+	}
+}
+
+func SaveTagList(dir string, tags []TagFile) error {
+	if len(tags) == 0 {
+		ClearTagList(dir)
+		return nil
+	}
+	p := TagListFile(dir)
 	raw := make([]byte, 0, len(tags)*cfgrec.TagRecSize)
 	for _, t := range tags {
 		raw = append(raw, EncodeTagFile(t)...)
@@ -192,6 +204,34 @@ func DeleteFromTagged(g *cfgrec.GlobalCfg, areas []cfgrec.FilesArea, tags []TagF
 	return out
 }
 
+func tagDiskNames(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, t TagFile) []string {
+	var names []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		k := strings.ToLower(s)
+		if seen[k] {
+			return
+		}
+		seen[k] = true
+		names = append(names, s)
+	}
+	add(DisplayName(g, []cfgrec.FilesArea{area}, t))
+	add(t.Name)
+	if t.RecordNum > 0 && g != nil {
+		ents, err := ReadFDB(g, area)
+		idx := int(t.RecordNum) - 1
+		if err == nil && idx >= 0 && idx < len(ents) {
+			add(ents[idx].Hdr.Name)
+			add(LongName(g, area, ents[idx].Hdr))
+		}
+	}
+	return names
+}
+
 func FoundFromTags(g *cfgrec.GlobalCfg, areas []cfgrec.FilesArea, tags []TagFile) []Found {
 	var out []Found
 	seen := map[string]bool{}
@@ -200,13 +240,15 @@ func FoundFromTags(g *cfgrec.GlobalCfg, areas []cfgrec.FilesArea, tags []TagFile
 		if !ok {
 			continue
 		}
-		name := DisplayName(g, areas, t)
-		cands := []string{DiskPath(a, name)}
-		if baseName(name) != baseName(t.Name) && strings.TrimSpace(t.Name) != "" {
-			cands = append(cands, DiskPath(a, t.Name))
-		}
 		var f Found
-		for _, p := range cands {
+		for _, name := range tagDiskNames(g, a, t) {
+			p := FileOnDiskSize(g, a, name, t.Size)
+			if p == "" {
+				p = FileOnDisk(g, a, name)
+			}
+			if p == "" {
+				continue
+			}
 			st, err := os.Stat(p)
 			if err != nil || st.IsDir() {
 				continue

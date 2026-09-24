@@ -80,13 +80,18 @@ func (e *Engine) download(data string, global, specific, anyFile, allowEdit bool
 		e.editTagList(false, anyFile, global, group, areaNum)
 	}
 	e.T.Println("")
+	e.T.ResetLines(1)
 	e.transferDownloads(e.taggedFound())
 }
 
 func (e *Engine) transferDownloads(tagged []files.Found) {
 	if len(tagged) == 0 {
 		e.T.Println("")
-		e.T.WriteRA("`A14:" + e.T.RalGet(lang.NoFiles))
+		if len(e.loadTagList()) > 0 {
+			e.T.WriteRA("`A12:" + e.T.RalGet(lang.NotFnd))
+		} else {
+			e.T.WriteRA("`A14:" + e.T.RalGet(lang.NoFiles))
+		}
 		e.T.Println("")
 		e.T.PressEnter()
 		return
@@ -112,6 +117,7 @@ func (e *Engine) transferDownloads(tagged []files.Found) {
 		if err != nil {
 			return
 		}
+		e.T.FinishEnter(ch)
 		pos := 0
 		if ch == '\r' || ch == '\n' {
 			pos = 1
@@ -212,8 +218,8 @@ func (e *Engine) pickDownloadProtocol() (cfgrec.Protocol, bool) {
 			return p, true
 		}
 		e.selectProtocol()
-		if e.Line.User.DefaultProto == 0 {
-			return cfgrec.Protocol{}, false
+		if e.Line.User.DefaultProto == 0 || e.Line.User.DefaultProto == ' ' {
+			break
 		}
 	}
 	p := config.FindProtocol(e.G, e.Line.User.DefaultProto)
@@ -221,7 +227,7 @@ func (e *Engine) pickDownloadProtocol() (cfgrec.Protocol, bool) {
 		return p, true
 	}
 	e.T.Println("")
-	e.T.WriteRA("`A14:" + e.T.RalGet(lang.NoFiles))
+	e.T.WriteRA("`A12:No transfer protocol selected.")
 	e.T.Println("")
 	e.T.PressEnter()
 	return cfgrec.Protocol{}, false

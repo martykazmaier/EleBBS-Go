@@ -28,6 +28,9 @@ func Perform(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg) bool {
 	line.AnsiOn = true
 	line.DispMorePrompt = false
 	t.ResetLines(0)
+	// Pascal PerformLogon: SetIdleTimeLimit(UserTimeOut) before the name prompt.
+	// Baud 0 (local) is exempt inside the input wait.
+	t.ArmIdle(time.Duration(g.RaConfig.UserTimeOut) * time.Second)
 
 	if line.AutoUser == "" {
 		line.AutoUser = os.Getenv("ELEBBS_AUTOUSER")

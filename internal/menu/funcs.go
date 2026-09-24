@@ -703,14 +703,6 @@ func (e *Engine) dirList(data string) {
 	e.T.PressEnter()
 }
 
-func (e *Engine) upload(data string) {
-	_ = data
-	e.T.WriteRA(e.T.RalGet(lang.FileUpl))
-	_, _ = e.T.GetString(12, false, false)
-	e.T.Println(e.T.RalStr(lang.XferSlow))
-	e.T.PressEnter()
-}
-
 func (e *Engine) todaysCallers() {
 	e.T.ClearScreen()
 	e.T.Println("")
@@ -844,6 +836,7 @@ func (e *Engine) selectProtocol() {
 	e.T.Println("")
 	e.T.WriteRA(e.T.RalGet(lang.Protocol2))
 	ch, _ := e.T.GetKey(0)
+	e.T.FinishEnter(ch)
 	up := pascal.UpCase(string(ch))
 	if ch == '\r' || ch == '\n' || up == "" {
 		return

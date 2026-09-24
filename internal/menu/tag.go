@@ -204,22 +204,18 @@ func adcKeys(s string) (add, del, clear byte) {
 	return 0, s[0], 0
 }
 
-// editTagList is Pascal EditTagList.
+// editTagList is Pascal EditTagList. An empty list exits without asking for
+// a filename (viewing the tag list is not a download prompt).
 func (e *Engine) editTagList(fromListing, anyFile, global, group bool, area uint16) {
 	for {
 		if !e.showTaggedFiles(fromListing) {
-			if fromListing {
-				return
-			}
-			e.userAddToTag(anyFile, global, group, area)
-			if !e.showTaggedFiles(fromListing) {
-				return
-			}
+			return
 		}
 		if len(e.loadTagList()) == 0 {
 			return
 		}
 		e.T.Println("")
+		e.T.ResetLines(1)
 		prompt := lang.ADC
 		keys := e.T.RalKeys(lang.ADC)
 		if fromListing {
@@ -244,6 +240,7 @@ func (e *Engine) editTagList(fromListing, anyFile, global, group bool, area uint
 		}
 		e.T.Println("")
 		if ch == '\r' || ch == '\n' {
+			e.T.FinishEnter(ch)
 			return
 		}
 		switch up {

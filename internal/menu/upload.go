@@ -9,6 +9,7 @@ import (
 	"elebbs/internal/cfgrec"
 	"elebbs/internal/config"
 	"elebbs/internal/door"
+	"elebbs/internal/files"
 	"elebbs/internal/lang"
 	"elebbs/internal/logx"
 	"elebbs/internal/mail"
@@ -35,45 +36,245 @@ func protocolUploadUsable(p cfgrec.Protocol, errorFree bool) bool {
 	}
 }
 
-// uploadAttach is Pascal DoUpload(”, True, False, TempDir) for message file-attach.
-func (e *Engine) uploadAttach(dest string) int {
-	dir := strings.TrimRight(strings.TrimSpace(dest), `\/`)
-	if dir == "" {
-		return 0
-	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return 0
-	}
-	local := e.Line == nil || e.Line.Baud == 0
-	if !local && e.G != nil && e.Line != nil {
-		sysop := pascal.UpCase(pascal.Trim(e.G.RaConfig.Sysop))
-		if sysop != "" && sysop == pascal.UpCase(pascal.Trim(e.Line.User.Name)) {
-			local = e.T.AskYesNo(lang.LocAttach, false)
-		}
-	}
-	if local {
-		e.localAttachUpload(dir)
-	} else {
-		e.protocolAttachUpload(dir)
-	}
-	tidyAttachUpload(dir)
-	return len(mail.AttachFiles(dir))
+// upload is Pascal DoUpload(MiscData, False, False, ”).
+// Transfers are allowed at any baud; TransferBaud is not enforced.
+func (e *Engine) upload(data string) {
+	e.doUpload(data, false, false, "")
 }
 
-func (e *Engine) localAttachUpload(dir string) {
+// uploadAttach is Pascal DoUpload(”, True, False, TempDir) for message file-attach.
+func (e *Engine) uploadAttach(dest string) int {
+	return e.doUpload("", true, false, dest)
+}
+
+func (e *Engine) doUpload(misc string, attaching, upMsg bool, ulPath string) int {
+	if e.Line == nil || e.G == nil {
+		return 0
+	}
+	area, ok := e.uploadArea(misc, attaching, ulPath)
+	if !ok {
+		return 0
+	}
+	if !attaching && !upMsg {
+		if !files.UploadAccess(area, e.Line.User) {
+			e.T.Println("")
+			e.T.WriteRA("`A12:")
+			e.T.Println("")
+			e.T.WriteRA(e.T.RalGet(lang.NoUpAcc))
+			e.T.Println("")
+			e.T.PressEnter()
+			return 0
+		}
+	}
+	dest := files.AreaUploadPath(e.G, area)
+	if attaching {
+		dest = strings.TrimRight(strings.TrimSpace(ulPath), `\/`)
+		if dest == "" {
+			return 0
+		}
+		if err := os.MkdirAll(dest, 0755); err != nil {
+			return 0
+		}
+	} else {
+		if dest == "" {
+			logx.Write(e.G, e.Line.RaNodeNr, '!', "Upload path does not exist!")
+			return 0
+		}
+		if st, err := os.Stat(dest); err != nil || !st.IsDir() {
+			logx.Write(e.G, e.Line.RaNodeNr, '!', "Upload path ("+pascal.UpCase(dest)+") does not exist!")
+			return 0
+		}
+	}
+
+	if !attaching {
+		e.T.ClearScreen()
+	}
+
+	local := e.Line.Baud == 0
+	if attaching && !local {
+		sysop := pascal.UpCase(pascal.Trim(e.G.RaConfig.Sysop))
+		if sysop != "" && sysop == pascal.UpCase(pascal.Trim(e.Line.User.Name)) {
+			if e.T.AskYesNo(lang.LocAttach, false) {
+				local = true
+			}
+		}
+	}
+
+	var count int
+	if local {
+		count = e.localAreaUpload(area, dest, attaching, upMsg)
+	} else {
+		count = e.protocolAreaUpload(area, dest, attaching, upMsg)
+	}
+
+	if attaching {
+		tidyAttachUpload(dest)
+		return len(mail.AttachFiles(dest))
+	}
+	e.T.WriteRaw([]byte("\r\x1b[K"))
+	e.T.WriteRA("`X1:`E:")
+	switch count {
+	case 0:
+		e.T.WriteRA("`A12:" + e.T.RalGet(lang.NoRec))
+	case 1:
+		e.T.WriteRA("`A12:1 " + e.T.RalGet(lang.FileRec))
+	default:
+		e.T.WriteRA("`A12:" + fmt.Sprintf("%d ", count) + e.T.RalGet(lang.FilesRec))
+	}
+	e.T.Println("")
+	e.T.PressEnter()
+	return count
+}
+
+func (e *Engine) uploadArea(misc string, attaching bool, ulPath string) (cfgrec.FilesArea, bool) {
+	if attaching {
+		return cfgrec.FilesArea{FilePath: ulPath}, true
+	}
+	num := e.Line.User.FileArea
+	w, _ := firstWord(misc)
+	if n := atoiMenu(w); n > 0 {
+		num = uint16(n)
+	}
+	a, ok := files.FindArea(e.Files, num)
+	if !ok {
+		e.T.WriteRA("`A12:" + e.T.RalGet(lang.InvArea))
+		e.T.Println("")
+		e.T.PressEnter()
+		return cfgrec.FilesArea{}, false
+	}
+	if a.UploadArea > 0 {
+		if u, uok := files.FindArea(e.Files, a.UploadArea); uok {
+			a = u
+		}
+	}
+	return a, true
+}
+
+func (e *Engine) pickUploadProtocol() (cfgrec.Protocol, bool) {
+	for i := 0; i < 4; i++ {
+		p := config.FindProtocol(e.G, e.Line.User.DefaultProto)
+		if protocolUploadUsable(p, e.Line.ErrorFreeConnect) {
+			return p, true
+		}
+		e.selectProtocol()
+		if e.Line.User.DefaultProto == 0 || e.Line.User.DefaultProto == ' ' {
+			break
+		}
+	}
+	p := config.FindProtocol(e.G, e.Line.User.DefaultProto)
+	if protocolUploadUsable(p, e.Line.ErrorFreeConnect) {
+		return p, true
+	}
+	e.T.Println("")
+	e.T.WriteRA("`A12:No transfer protocol selected.")
+	e.T.Println("")
+	e.T.PressEnter()
+	return cfgrec.Protocol{}, false
+}
+
+func (e *Engine) askUploadStart(prot cfgrec.Protocol) (cfgrec.Protocol, bool) {
+	for {
+		e.T.WriteRA("`A10:" + e.T.RalGet(lang.DefProt) + prot.Name)
+		e.T.Println("")
+		e.T.WriteRA("`A11:" + e.T.RalGet(lang.SNA))
+		keys := pascal.UpCase(e.T.RalKeys(lang.SNA))
+		if keys == "" {
+			keys = "SNA"
+		}
+		ch, err := e.T.GetKey(0)
+		if err != nil {
+			return cfgrec.Protocol{}, false
+		}
+		e.T.FinishEnter(ch)
+		pos := 0
+		if ch == '\r' || ch == '\n' {
+			pos = 1
+		} else {
+			up := pascal.UpCase(string([]byte{ch}))
+			if i := strings.Index(keys, up); i >= 0 {
+				pos = i + 1
+			}
+		}
+		switch pos {
+		case 1:
+			return prot, true
+		case 2:
+			e.selectProtocol()
+			var ok bool
+			prot, ok = e.pickUploadProtocol()
+			if !ok {
+				return cfgrec.Protocol{}, false
+			}
+		case 3:
+			return cfgrec.Protocol{}, false
+		}
+	}
+}
+
+func (e *Engine) protocolAreaUpload(area cfgrec.FilesArea, dest string, attaching, upMsg bool) int {
+	_ = upMsg
+	prot, ok := e.pickUploadProtocol()
+	if !ok {
+		return 0
+	}
+	prot, ok = e.askUploadStart(prot)
+	if !ok {
+		return 0
+	}
+
+	e.T.ClearScreen()
+	e.T.WriteRA("`A11:" + e.T.RalGet(lang.Protocol1) + prot.Name)
+	e.T.Println("")
+	e.T.WriteRA("`A15:" + e.T.RalGet(lang.StartUL))
+	e.T.Println("")
+
+	ul := pascal.ForceBack(dest)
+	node := door.DropDir(e.G, e.Line)
+	beforeDest := listPlainNames(dest)
+	beforeNode := listPlainNames(node)
+	ctl := e.writeUploadCtl(prot, ul)
+	cmd := strings.ReplaceAll(prot.UpCmdString, "#", ul)
+	if prot.LogFileName != "" {
+		_ = os.Remove(expandNodeName(prot.LogFileName, e.Line.RaNodeNr))
+	}
+	e.T.ClearScreen()
+	door.Run(e.T, e.G, e.Line, e.Files, cmd, false)
+	names := e.collectUploadedNames(prot, dest, node, beforeDest, beforeNode, attaching)
+	if ctl != "" {
+		_ = os.Remove(ctl)
+	}
+	if prot.LogFileName != "" {
+		_ = os.Remove(expandNodeName(prot.LogFileName, e.Line.RaNodeNr))
+	}
+	if attaching {
+		return len(names)
+	}
+	return e.processUploads(area, names, prot.Name)
+}
+
+func (e *Engine) localAreaUpload(area cfgrec.FilesArea, dest string, attaching, upMsg bool) int {
+	_ = upMsg
+	if !attaching {
+		e.T.ClearScreen()
+		e.T.WriteRA("`A15:" + e.T.RalGet(lang.LocUpl))
+		e.T.Println("")
+		e.T.Println("")
+	}
 	e.T.WriteRA("`A10:" + e.T.RalGet(lang.EntrName))
 	e.T.Println("")
 	e.T.Println("")
+
+	var names []string
 	for {
 		e.T.WriteRA("`A03:" + e.T.RalGet(lang.File1))
 		name, err := e.T.GetString(80, false, false)
 		e.T.Println("")
 		if err != nil {
-			return
+			break
 		}
 		name = pascal.Trim(name)
 		if name == "" {
-			return
+			break
 		}
 		matches := attachUploadMatches(name)
 		if len(matches) == 0 {
@@ -86,22 +287,216 @@ func (e *Engine) localAttachUpload(dir string) {
 			if err != nil || st.IsDir() {
 				continue
 			}
-			to := filepath.Join(dir, filepath.Base(src))
+			base := filepath.Base(src)
+			to := filepath.Join(dest, base)
 			if _, err := os.Stat(to); err == nil {
-				if !e.T.AskYesNo(lang.AlreadAtt, false) {
+				if attaching {
+					if !e.T.AskYesNo(lang.AlreadAtt, false) {
+						continue
+					}
+				} else {
+					e.T.WriteRA("`A11:" + base + ": " + e.T.RalGet(lang.Exists2))
+					e.T.Println("")
+					continue
+				}
+			}
+			if !attaching {
+				if files.NameInDupeScan(e.G, e.Files, base) {
+					e.T.WriteRA("`A3:" + base + ": " + e.T.RalGet(lang.Exists1))
+					e.T.Println("")
 					continue
 				}
 			}
 			if err := copyDownloadFile(src, to); err != nil {
-				e.T.WriteRA("`A12:" + e.T.RalGet(lang.NotFound2) + " " + filepath.Base(src))
+				e.T.WriteRA("`A12:" + e.T.RalGet(lang.NotFound2) + " " + base)
 				e.T.Println("")
 				continue
 			}
-			e.T.WriteRA("`A11:" + e.T.RalGet(lang.Sent1) + filepath.Base(src))
+			e.T.WriteRA("`A11:" + e.T.RalGet(lang.Sent1) + base)
 			e.T.Println("")
 			logx.Write(e.G, e.Line.RaNodeNr, '>', "Upload [Local] "+to)
+			names = append(names, base)
 		}
 	}
+	if attaching {
+		return len(names)
+	}
+	return e.processUploads(area, names, "Local")
+}
+
+func (e *Engine) collectUploadedNames(p cfgrec.Protocol, dest, node string, beforeDest, beforeNode map[string]bool, attaching bool) []string {
+	seen := map[string]bool{}
+	var names []string
+	add := func(path string) {
+		base := filepath.Base(path)
+		if base == "" || mail.ProtocolJunk(base) || dropFileNames[pascal.UpCase(base)] {
+			return
+		}
+		up := pascal.UpCase(base)
+		if seen[up] {
+			return
+		}
+		to := filepath.Join(dest, base)
+		src := path
+		if !filepath.IsAbs(src) {
+			if st, err := os.Stat(filepath.Join(dest, base)); err == nil && !st.IsDir() {
+				src = filepath.Join(dest, base)
+			} else {
+				src = filepath.Join(node, base)
+			}
+		}
+		if sameFile(src, to) {
+			seen[up] = true
+			names = append(names, base)
+			return
+		}
+		if _, err := os.Stat(src); err != nil {
+			return
+		}
+		if err := moveUploadFile(src, to); err != nil {
+			return
+		}
+		seen[up] = true
+		names = append(names, base)
+		if attaching {
+			logx.Write(e.G, e.Line.RaNodeNr, '>', "Upload ["+p.Name+"] "+to)
+		}
+	}
+
+	if kw := strings.TrimSpace(p.UpLogKeyWord); kw != "" && p.LogFileName != "" {
+		raw, err := os.ReadFile(expandNodeName(p.LogFileName, e.Line.RaNodeNr))
+		if err == nil {
+			upkw := pascal.UpCase(kw)
+			for _, line := range strings.Split(string(raw), "\n") {
+				line = strings.TrimRight(line, "\r")
+				if !strings.Contains(pascal.UpCase(line), upkw) {
+					continue
+				}
+				if name := uploadLogName(line); name != "" {
+					add(name)
+				}
+			}
+		}
+	}
+	for _, name := range listPlainNamesList(dest) {
+		if beforeDest[pascal.UpCase(name)] {
+			continue
+		}
+		add(filepath.Join(dest, name))
+	}
+	for _, name := range listPlainNamesList(node) {
+		if beforeNode[pascal.UpCase(name)] {
+			continue
+		}
+		add(filepath.Join(node, name))
+	}
+	return names
+}
+
+func (e *Engine) processUploads(area cfgrec.FilesArea, names []string, protName string) int {
+	okCount := 0
+	first := true
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if files.BadFileName(e.G, name) {
+			e.T.Println("")
+			e.T.WriteRA("`A12:" + e.T.RalGet(lang.Rejected2))
+			e.T.Println("")
+			e.T.Println("")
+			e.T.PressEnter()
+			_ = os.Remove(filepath.Join(files.AreaUploadPath(e.G, area), name))
+			continue
+		}
+		if files.NameInDupeScan(e.G, e.Files, name) {
+			e.T.Println("")
+			e.T.WriteRA("`A12:" + e.T.RalGet(lang.Rejected1))
+			e.T.Println("")
+			e.T.Println("")
+			e.T.PressEnter()
+			continue
+		}
+		desc, attrib, ok := e.askUploadDesc(area, name, first)
+		first = false
+		if !ok {
+			continue
+		}
+		if err := files.AddToFDB(e.G, area, name, e.Line.User.Name, desc, attrib); err != nil {
+			continue
+		}
+		path := filepath.Join(files.AreaUploadPath(e.G, area), name)
+		st, _ := os.Stat(path)
+		size := int64(0)
+		if st != nil {
+			size = st.Size()
+		}
+		e.Line.User.Uploads++
+		e.Line.User.UploadsK += int32(size / 1024)
+		okCount++
+		logx.Write(e.G, e.Line.RaNodeNr, '>', "Upload ["+protName+"] "+pascal.ForceBack(files.AreaUploadPath(e.G, area))+name)
+		logx.Write(e.G, e.Line.RaNodeNr, '>', fmt.Sprintf("(%d bytes, %dk)", size, size/1024))
+	}
+	if okCount > 0 {
+		e.saveUser()
+	}
+	return okCount
+}
+
+func (e *Engine) askUploadDesc(area cfgrec.FilesArea, name string, first bool) (desc string, attrib byte, ok bool) {
+	e.T.WriteRA("`A12:")
+	e.T.Println("")
+	if first {
+		e.T.WriteRA(e.T.RalGet(lang.Descr))
+		e.T.Println("")
+		e.T.PressEnter()
+	}
+	for {
+		e.T.Println("")
+		e.T.WriteRA("`A2:" + e.T.RalGet(lang.PlsDesc) + " `A3:")
+		e.T.WriteRA(padName(name, 14) + "`A15::")
+		s, err := e.T.GetString(40, false, false)
+		if err != nil {
+			return "", 0, false
+		}
+		s = pascal.Trim(s)
+		if s == "" {
+			continue
+		}
+		if strings.HasPrefix(s, "/") {
+			attrib = cfgrec.AttrUnlisted | cfgrec.AttrNotAvail
+			s = strings.TrimSpace(s[1:])
+		}
+		if files.AreaLongDesc(area) {
+			var lines []string
+			if s != "" {
+				lines = append(lines, s)
+			}
+			for len(lines) < 20 {
+				more, err := e.T.GetString(70, false, false)
+				if err != nil {
+					break
+				}
+				more = pascal.Trim(more)
+				if more == "" {
+					break
+				}
+				lines = append(lines, more)
+			}
+			s = strings.Join(lines, "\n")
+		}
+		if pascal.Trim(s) == "" {
+			continue
+		}
+		return s, attrib, true
+	}
+}
+
+func padName(s string, n int) string {
+	if len(s) >= n {
+		return s[:n]
+	}
+	return s + strings.Repeat(" ", n-len(s))
 }
 
 func attachUploadMatches(name string) []string {
@@ -120,95 +515,6 @@ func attachUploadMatches(name string) []string {
 		return []string{name}
 	}
 	return nil
-}
-
-func (e *Engine) pickUploadProtocol() (cfgrec.Protocol, bool) {
-	for i := 0; i < 4; i++ {
-		p := config.FindProtocol(e.G, e.Line.User.DefaultProto)
-		if protocolUploadUsable(p, e.Line.ErrorFreeConnect) {
-			return p, true
-		}
-		e.selectProtocol()
-		if e.Line.User.DefaultProto == 0 {
-			return cfgrec.Protocol{}, false
-		}
-	}
-	p := config.FindProtocol(e.G, e.Line.User.DefaultProto)
-	if protocolUploadUsable(p, e.Line.ErrorFreeConnect) {
-		return p, true
-	}
-	e.T.Println("")
-	e.T.WriteRA("`A14:" + e.T.RalGet(lang.NoFiles))
-	e.T.Println("")
-	e.T.PressEnter()
-	return cfgrec.Protocol{}, false
-}
-
-func (e *Engine) protocolAttachUpload(dir string) {
-	prot, ok := e.pickUploadProtocol()
-	if !ok {
-		return
-	}
-	for {
-		e.T.WriteRA("`A10:" + e.T.RalGet(lang.DefProt) + prot.Name)
-		e.T.Println("")
-		e.T.WriteRA("`A11:" + e.T.RalGet(lang.SNA))
-		keys := pascal.UpCase(e.T.RalKeys(lang.SNA))
-		if keys == "" {
-			keys = "SNA"
-		}
-		ch, err := e.T.GetKey(0)
-		if err != nil {
-			return
-		}
-		pos := 0
-		if ch == '\r' || ch == '\n' {
-			pos = 1
-		} else {
-			up := pascal.UpCase(string([]byte{ch}))
-			if i := strings.Index(keys, up); i >= 0 {
-				pos = i + 1
-			}
-		}
-		switch pos {
-		case 1:
-		case 2:
-			e.selectProtocol()
-			prot, ok = e.pickUploadProtocol()
-			if !ok {
-				return
-			}
-			continue
-		case 3:
-			return
-		default:
-			continue
-		}
-		break
-	}
-	e.T.ClearScreen()
-	e.T.WriteRA("`A11:" + e.T.RalGet(lang.Protocol1) + prot.Name)
-	e.T.Println("")
-	e.T.WriteRA("`A15:" + e.T.RalGet(lang.StartUL))
-	e.T.Println("")
-
-	node := door.DropDir(e.G, e.Line)
-	before := listPlainNames(node)
-	ul := pascal.ForceBack(strings.TrimRight(dir, `\/`))
-	ctl := e.writeUploadCtl(prot, ul)
-	cmd := strings.ReplaceAll(prot.UpCmdString, "#", ul)
-	if prot.LogFileName != "" {
-		_ = os.Remove(expandNodeName(prot.LogFileName, e.Line.RaNodeNr))
-	}
-	e.T.ClearScreen()
-	door.Run(e.T, e.G, e.Line, e.Files, cmd, false)
-	e.harvestUploads(prot, dir, node, before)
-	if ctl != "" {
-		_ = os.Remove(ctl)
-	}
-	if prot.LogFileName != "" {
-		_ = os.Remove(expandNodeName(prot.LogFileName, e.Line.RaNodeNr))
-	}
 }
 
 func (e *Engine) writeUploadCtl(p cfgrec.Protocol, ulPath string) string {
@@ -247,54 +553,6 @@ func (e *Engine) writeUploadCtl(p cfgrec.Protocol, ulPath string) string {
 		return ""
 	}
 	return name
-}
-
-func (e *Engine) harvestUploads(p cfgrec.Protocol, dest, node string, before map[string]bool) {
-	dest = strings.TrimRight(dest, `\/`)
-	if kw := strings.TrimSpace(p.UpLogKeyWord); kw != "" && p.LogFileName != "" {
-		raw, err := os.ReadFile(expandNodeName(p.LogFileName, e.Line.RaNodeNr))
-		if err == nil {
-			upkw := pascal.UpCase(kw)
-			for _, line := range strings.Split(string(raw), "\n") {
-				line = strings.TrimRight(line, "\r")
-				if !strings.Contains(pascal.UpCase(line), upkw) {
-					continue
-				}
-				name := uploadLogName(line)
-				if name == "" || mail.ProtocolJunk(name) {
-					continue
-				}
-				src := name
-				if !filepath.IsAbs(src) {
-					src = filepath.Join(node, filepath.Base(name))
-				}
-				to := filepath.Join(dest, filepath.Base(name))
-				if sameFile(src, to) {
-					continue
-				}
-				if err := moveUploadFile(src, to); err == nil {
-					logx.Write(e.G, e.Line.RaNodeNr, '>', "Upload ["+p.Name+"] "+to)
-				}
-			}
-		}
-	}
-	for _, name := range listPlainNamesList(node) {
-		up := pascal.UpCase(name)
-		if before[up] || dropFileNames[up] {
-			continue
-		}
-		src := filepath.Join(node, name)
-		if mail.ProtocolJunk(name) {
-			continue
-		}
-		to := filepath.Join(dest, name)
-		if sameFile(src, to) {
-			continue
-		}
-		if err := moveUploadFile(src, to); err == nil {
-			logx.Write(e.G, e.Line.RaNodeNr, '>', "Upload ["+p.Name+"] "+to)
-		}
-	}
 }
 
 func uploadLogName(line string) string {

@@ -88,6 +88,30 @@ func TestDownloadAllowsAnySpeed(t *testing.T) {
 	}
 }
 
+func TestViewTaggedFilesEmptyDoesNotAskFilename(t *testing.T) {
+	dir := t.TempDir()
+	st := &seqStream{in: []byte("GAME.ZIP\r")} // would be consumed if File: was prompted
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	line := &cfgrec.LineCfg{AnsiOn: true, User: cfgrec.User{Record: -1, FileArea: 1, Security: 100}}
+	line.Telnet.NodeDirectories = dir
+	tio := term.New(st, g, line)
+	eng := &Engine{T: tio, G: g, Line: line, Files: []cfgrec.FilesArea{{AreaNum: 1, Name: "Games"}}}
+	if !eng.ExecType(71, "") {
+		t.Fatal("type 71")
+	}
+	out := st.out.String()
+	if !strings.Contains(out, "currently no tagged") {
+		t.Fatalf("expected empty-list message: %q", out)
+	}
+	if strings.Contains(out, "File:") {
+		t.Fatalf("should not ask for a filename: %q", out)
+	}
+	if len(files.LoadTagList(dir)) != 0 {
+		t.Fatal("should not have tagged from the unused input")
+	}
+}
+
 func TestViewTaggedFilesShowsTagListAfterClear(t *testing.T) {
 	dir := t.TempDir()
 	rec := files.EncodeTagFile(files.TagFile{Name: "GAME.ZIP", AreaNum: 1, Size: 12 * 1024})

@@ -2,8 +2,10 @@ package term
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	"elebbs/internal/comm"
 	"elebbs/internal/config"
 	"elebbs/internal/lang"
+	"elebbs/internal/logx"
 	"elebbs/internal/pascal"
 )
 
@@ -45,7 +48,17 @@ type IO struct {
 	csiPend       []byte
 	raduPend      []byte
 	skipWaitEnter bool
+	// Idle timer, Pascal tControlObj.TimeInfo + LineCfg.CheckInactivity.
+	// Local logons (Baud 0) are never timed out.
+	idleTime   time.Duration
+	idleLimit  time.Time
+	idleOn     bool
+	idleWarned bool
+	idleDone   bool
 }
+
+// ErrIdle is Pascal CheckIdle's inactivity hangup.
+var ErrIdle = errors.New("inactivity timeout")
 
 func New(s comm.Stream, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg) *IO {
 	length := int(line.User.ScreenLength)
@@ -350,30 +363,211 @@ func (t *IO) ClearScreen() {
 }
 
 func (t *IO) GetKey(timeout time.Duration) (byte, error) {
-	if timeout > 0 {
-		_ = t.S.SetReadDeadline(time.Now().Add(timeout))
-		defer t.S.SetReadDeadline(time.Time{})
-	} else {
-		_ = t.S.SetReadDeadline(time.Time{})
+	if t != nil && t.idleDone {
+		return 0, ErrIdle
 	}
-	var buf [1]byte
-	t.mu.Lock()
-	if len(t.push) > 0 {
-		b := t.push[0]
-		t.push = t.push[1:]
+	var callEnd time.Time
+	timed := timeout > 0
+	if timed {
+		callEnd = time.Now().Add(timeout)
+	}
+	defer func() { _ = t.S.SetReadDeadline(time.Time{}) }()
+	for {
+		if err := t.checkIdle(); err != nil {
+			return 0, err
+		}
+		t.mu.Lock()
+		if len(t.push) > 0 {
+			b := t.push[0]
+			t.push = t.push[1:]
+			t.mu.Unlock()
+			t.touchIdle()
+			return b, nil
+		}
 		t.mu.Unlock()
-		return b, nil
+
+		wait := time.Duration(-1)
+		if timed {
+			wait = time.Until(callEnd)
+			if wait <= 0 {
+				return 0, idleTimeout{}
+			}
+		}
+		if slice := t.idleSlice(); slice >= 0 && (wait < 0 || slice < wait) {
+			wait = slice
+		}
+		if wait == 0 {
+			if err := t.checkIdle(); err != nil {
+				return 0, err
+			}
+			if t.idleSlice() == 0 {
+				time.Sleep(20 * time.Millisecond)
+			}
+			continue
+		}
+		if wait > 0 {
+			_ = t.S.SetReadDeadline(time.Now().Add(wait))
+		} else {
+			_ = t.S.SetReadDeadline(time.Time{})
+		}
+		var buf [1]byte
+		n, err := t.S.Read(buf[:])
+		if n == 1 {
+			t.touchIdle()
+			return buf[0], nil
+		}
+		if err == nil {
+			err = io.EOF
+		}
+		if readTimeout(err) {
+			if timed && !time.Now().Before(callEnd) {
+				return 0, err
+			}
+			continue
+		}
+		return 0, err
 	}
-	t.mu.Unlock()
-	n, err := t.S.Read(buf[:])
-	if n == 1 {
-		return buf[0], nil
-	}
-	if err == nil {
-		err = io.EOF
-	}
-	return 0, err
 }
+
+// ArmIdle is Pascal SetIdleTimeLimit plus CheckInactivity. Zero disables it.
+func (t *IO) ArmIdle(d time.Duration) {
+	if t == nil {
+		return
+	}
+	if d < 0 {
+		d = 0
+	}
+	t.idleTime = d
+	t.idleOn = d > 0
+	t.idleWarned = false
+	t.idleDone = false
+	t.SetTimeOut()
+}
+
+// SetTimeOut is Pascal SetTimeOut: IdleLimit = now + IdleTime.
+func (t *IO) SetTimeOut() {
+	if t == nil || t.idleTime <= 0 {
+		return
+	}
+	t.idleLimit = time.Now().Add(t.idleTime)
+}
+
+// SuspendIdle is the shell/transfer window where CheckInactivity is false.
+// The returned function restores the flag and resets the idle clock.
+func (t *IO) SuspendIdle() func() {
+	if t == nil {
+		return func() {}
+	}
+	prev := t.idleOn
+	t.idleOn = false
+	return func() {
+		t.idleOn = prev
+		t.SetTimeOut()
+	}
+}
+
+// IdleHung reports that CheckIdle already disconnected this session.
+func (t *IO) IdleHung() bool {
+	return t != nil && t.idleDone
+}
+
+func (t *IO) touchIdle() {
+	if t == nil || t.idleTime <= 0 {
+		return
+	}
+	t.idleLimit = time.Now().Add(t.idleTime)
+	t.idleWarned = false
+}
+
+func (t *IO) idleActive() bool {
+	return t != nil && t.Line != nil && t.Line.Baud != 0 && t.idleOn && t.idleTime > 0 && !t.idleDone
+}
+
+// idleSlice is how long to block before the next CheckIdle event.
+// Negative means the idle timer is not running.
+func (t *IO) idleSlice() time.Duration {
+	if !t.idleActive() {
+		return -1
+	}
+	now := time.Now()
+	remain := t.idleLimit.Sub(now)
+	if remain < 0 {
+		return 0
+	}
+	if t.idleTime > 30*time.Second && !t.idleWarned {
+		untilWarn := t.idleLimit.Add(-30 * time.Second).Sub(now)
+		if untilWarn <= 0 {
+			if remain < 30*time.Second {
+				return 0
+			}
+			return time.Millisecond
+		}
+		if untilWarn < remain {
+			return untilWarn
+		}
+	}
+	return remain
+}
+
+func (t *IO) checkIdle() error {
+	if t == nil {
+		return nil
+	}
+	if t.idleDone {
+		return ErrIdle
+	}
+	if !t.idleActive() {
+		return nil
+	}
+	remain := time.Until(t.idleLimit)
+	if t.idleTime > 30*time.Second && !t.idleWarned && remain < 30*time.Second {
+		t.idleWarned = true
+		t.idleNotice(lang.Inactive2, "You are about to be disconnected for inactivity!", true)
+	}
+	if !time.Now().Before(t.idleLimit) {
+		return t.idleHangup()
+	}
+	return nil
+}
+
+func (t *IO) idleHangup() error {
+	t.idleDone = true
+	t.idleOn = false
+	t.idleNotice(lang.Inactive1, "* User Inactivity Timeout, Disconnecting *", false)
+	if t.Cfg != nil && t.Line != nil {
+		logx.Write(t.Cfg, t.Line.RaNodeNr, '>', "Inactivity timeout")
+	}
+	return ErrIdle
+}
+
+func (t *IO) idleNotice(id int, fallback string, bells bool) {
+	msg := fallback
+	if t.Ral != nil {
+		if s := t.Ral.Get(id); s != "" {
+			msg = s
+		}
+	}
+	save := t.MorePrompt
+	t.MorePrompt = false
+	t.WriteRaw([]byte("\r\n"))
+	t.WriteRA("`A12:" + msg + "\r\n")
+	if bells {
+		t.WriteRaw([]byte{7, 7})
+	}
+	t.MorePrompt = save
+	t.ResetLines(1)
+}
+
+func readTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
+type idleTimeout struct{}
+
+func (idleTimeout) Error() string   { return "i/o timeout" }
+func (idleTimeout) Timeout() bool   { return true }
+func (idleTimeout) Temporary() bool { return true }
 
 func (t *IO) PeekKey() (byte, bool) {
 	t.mu.Lock()
@@ -389,6 +583,15 @@ func (t *IO) PeekKey() (byte, bool) {
 	}
 	t.PutBack(string([]byte{ch}))
 	return ch, true
+}
+
+// FinishEnter swallows the LF after CR (or CR after LF) so the next prompt
+// does not treat that mate as its own Enter.
+func (t *IO) FinishEnter(got byte) {
+	if t == nil {
+		return
+	}
+	t.eatLineEndMate(got)
 }
 
 // eatLineEndMate swallows the LF after CR (or CR after LF) so telnet Enter

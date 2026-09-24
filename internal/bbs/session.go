@@ -130,14 +130,26 @@ func (s *Session) RunOn(st comm.Stream) error {
 	online.SetRaBusy(s.G, s.Line.RaNodeNr, true)
 	defer online.SetRaBusy(s.G, s.Line.RaNodeNr, false)
 	defer online.Kill(s.G, s.Line)
+	// Pascal InitVariables / session end: erase taglist.ra so the next caller
+	// on this node does not inherit tagged downloads.
+	clearNodeTagList := func() {
+		files.ClearTagList(door.DropDir(s.G, s.Line))
+	}
+	clearNodeTagList()
+	defer clearNodeTagList()
 	localScreen(s, fmt.Sprintf("%sIncoming session node %d (%s)", cfgrec.SystemMsgPrefix, s.Line.RaNodeNr, mode(s)))
 	logx.Write(s.G, s.Line.RaNodeNr, '+', "Node started")
 	if !logon.Perform(t, s.G, s.Line) {
-		logx.Write(s.G, s.Line.RaNodeNr, '-', "Logon failed")
+		if !t.IdleHung() {
+			logx.Write(s.G, s.Line.RaNodeNr, '-', "Logon failed")
+		}
 		return io.EOF
 	}
 	t.Ral = lang.Load(s.G, s.Line.Language)
 	eng.Enter()
+	if t.IdleHung() {
+		return io.EOF
+	}
 	t.Println("")
 	t.WriteRA("`A14:Goodbye from " + s.G.RaConfig.SystemName + "`A7:\r\n")
 	term.DisplayHotFile(t, s.G.RaConfig.TextPath, "goodbye")

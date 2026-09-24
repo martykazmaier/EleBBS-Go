@@ -48,7 +48,22 @@ func idxPath(g *cfgrec.GlobalCfg, area cfgrec.FilesArea) string {
 }
 
 func txtPath(g *cfgrec.GlobalCfg, area cfgrec.FilesArea) string {
-	return FDBPath(g, "txt", area.AreaNum)
+	p := FDBPath(g, "txt", area.AreaNum)
+	if _, err := os.Stat(p); err == nil {
+		return p
+	}
+	name := fmt.Sprintf("fdb%d.txt", area.AreaNum)
+	cands := []string{
+		filepath.Join(FileBase(g), name),
+		filepath.Join(filepath.Dir(hdrPath(g, area)), name),
+		filepath.Join(area.FilePath, name),
+	}
+	for _, c := range cands {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return p
 }
 
 func EnsureFDBDirs(g *cfgrec.GlobalCfg) error {
@@ -86,6 +101,46 @@ func ReadFDB(g *cfgrec.GlobalCfg, area cfgrec.FilesArea) ([]Entry, error) {
 		out = append(out, e)
 	}
 	return out, nil
+}
+
+// LongName is Pascal FdbFileObj.GetFileName: LFN at LfnPtr in the area
+// .txt file (EleBBS), then the optional .lfn file, else the 8.3 name.
+func LongName(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, h cfgrec.FilesHdr) string {
+	short := strings.TrimSpace(h.Name)
+	if g == nil || h.LfnPtr <= 0 {
+		return short
+	}
+	raw := readLfnBytes(g, area)
+	off := int(h.LfnPtr)
+	if off < 0 || off >= len(raw) {
+		return short
+	}
+	end := off
+	for end < len(raw) && raw[end] != 0 && end-off < 255 {
+		end++
+	}
+	s := strings.TrimSpace(pascal.FromCP437(raw[off:end]))
+	if s == "" {
+		return short
+	}
+	return s
+}
+
+func readLfnBytes(g *cfgrec.GlobalCfg, area cfgrec.FilesArea) []byte {
+	if g == nil {
+		return nil
+	}
+	for _, p := range []string{
+		txtPath(g, area),
+		FDBPath(g, "lfn", area.AreaNum),
+		filepath.Join(FileBase(g), fmt.Sprintf("fdb%d.lfn", area.AreaNum)),
+	} {
+		raw, err := os.ReadFile(p)
+		if err == nil && len(raw) > 0 {
+			return raw
+		}
+	}
+	return nil
 }
 
 func descAt(txt []byte, off int) string {

@@ -19,6 +19,11 @@ func Run(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, areas []cfgrec.F
 	if line == nil {
 		return
 	}
+	// Pascal RAExec / file transfer: CheckInactivity is off for the child,
+	// then SetTimeOut runs when the node has the keyboard again.
+	if t != nil {
+		defer t.SuspendIdle()()
+	}
 	sock := socketHandle(t, line)
 	dup := uintptr(0)
 	inheritNum := ""
