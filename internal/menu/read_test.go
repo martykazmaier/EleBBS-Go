@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -226,5 +227,66 @@ func TestShowMessageAttachUsesLanguageStrings(t *testing.T) {
 	}
 	if !bytes.Contains(out, []byte("20-09-2026")) {
 		t.Fatalf("RDMSG #3 want user date format: %q", out)
+	}
+}
+
+func TestShowMessagePagesSoftCRBody(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "soft")
+	var b strings.Builder
+	for i := 0; i < 40; i++ {
+		if i > 0 {
+			b.WriteByte(mail.SoftCR)
+		}
+		b.WriteString("word")
+		b.WriteByte(' ')
+		b.WriteString(strings.Repeat("x", 10))
+	}
+	if _, err := mail.AppendMsg(base, mail.Article{
+		From: "Alice", To: "Bob", Subject: "soft", Body: b.String(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := &seqStream{in: bytes.Repeat([]byte("Y"), 80)}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	line := &cfgrec.LineCfg{
+		AnsiOn:         true,
+		DispMorePrompt: true,
+		User:           cfgrec.User{Name: "Bob", Security: 100, Record: -1, ScreenLength: 10},
+	}
+	tio := term.New(st, g, line)
+	tio.MorePrompt = true
+	tio.Length = 10
+	eng := &Engine{T: tio, G: g, Line: line}
+	a := cfgrec.MessageArea{AreaNum: 1, Name: "Soft", Attribute: 1 << 7, JAMBase: base}
+	art, ok := mail.ReadMsg(base, 1)
+	if !ok {
+		t.Fatal("read")
+	}
+	eng.showMessage(a, art, true)
+	out := st.out.String()
+	if !strings.Contains(out, "More") && !strings.Contains(out, "more") {
+		t.Fatalf("expected page pause for soft-CR body: %q", out)
+	}
+}
+
+func TestBuildQuoteLinesWrapsSoftCR(t *testing.T) {
+	body := "First line of text that continues" + string(mail.SoftCR) + "without a hard return and needs wrapping for quotes."
+	q := buildQuoteLines(nil, "Bob", "Alice", "01-02-06 15:04", body)
+	if len(q) < 3 {
+		t.Fatalf("expected multiple quote lines, got %#v", q)
+	}
+	joined := strings.Join(q, "\n")
+	if strings.Contains(joined, string(mail.SoftCR)) {
+		t.Fatalf("soft CR in quote: %#v", q)
+	}
+	if !strings.Contains(joined, "Alice") || !strings.Contains(joined, "First line") {
+		t.Fatalf("missing content: %#v", q)
+	}
+	for _, ln := range q[2:] {
+		if len(ln) > 78 {
+			t.Fatalf("overlong quote line %q (%d)", ln, len(ln))
+		}
 	}
 }

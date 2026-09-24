@@ -10,7 +10,8 @@ import (
 )
 
 func (e *Engine) raEditor(header string, quote []string) []string {
-	const maxLines, width = 60, 70
+	const width = 70
+	maxLines := maxEditLines
 	e.T.ClearScreen()
 	e.T.WriteRA("`A3:" + header)
 	e.T.Println("")

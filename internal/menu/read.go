@@ -397,7 +397,17 @@ func (e *Engine) showMessage(a cfgrec.MessageArea, art mail.Article, pause bool)
 		e.T.Println("")
 		e.T.Println("")
 	}
-	for _, ln := range strings.Split(strings.ReplaceAll(art.Body, "\r\n", "\n"), "\n") {
+	// Pascal GetString(79) after the header: count rows already used so
+	// -- More -- fires for the rest of the screen, not a full Length of body.
+	if pause {
+		if y := e.T.WhereY(); y > 1 {
+			e.T.ResetLines(y - 1)
+		}
+		e.T.MorePrompt = true
+		e.Line.DispMorePrompt = true
+		e.T.StopMore = false
+	}
+	for _, ln := range mail.WrapLines(art.Body, 79) {
 		e.showMsgLine(ln)
 	}
 	return e.msgBar(a, art)

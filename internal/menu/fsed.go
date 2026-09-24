@@ -635,10 +635,14 @@ func buildQuoteLines(g *cfgrec.GlobalCfg, origTo, origFrom, origDate string, bod
 	} else {
 		prefix = initials(origFrom) + "> "
 	}
-	var out []string
+	// Pascal ReplyToMsg: GetString(78 - Length(QuoteString)).
+	width := 78 - len(prefix)
+	if width < 20 {
+		width = 20
+	}
 	hdr := "* In a message originally to " + origTo + ", " + origFrom + " said:"
-	out = append(out, hdr, "")
-	for _, ln := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+	out := []string{hdr, ""}
+	for _, ln := range mail.WrapLines(body, width) {
 		if pascal.Trim(ln) == "" {
 			continue
 		}

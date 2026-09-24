@@ -40,15 +40,6 @@ func (e *Engine) checkMailBox(data string) {
 		saveDisp = e.Line.DispMorePrompt
 		e.Line.DispMorePrompt = false
 	}
-	defer func() {
-		if e.T != nil {
-			e.T.MorePrompt = saveMore
-			e.T.StopMore = false
-		}
-		if e.Line != nil {
-			e.Line.DispMorePrompt = saveDisp
-		}
-	}()
 	// /MG = all message groups (Pascal CheckMsgAreaAccess Group=false).
 	checkGroup := !strings.Contains(pascal.UpCase(data), "/MG")
 	grp := e.Line.User.MsgGroup
@@ -58,6 +49,13 @@ func (e *Engine) checkMailBox(data string) {
 	})
 	e.T.Println("")
 	e.T.Println("")
+	if e.T != nil {
+		e.T.MorePrompt = saveMore
+		e.T.StopMore = false
+	}
+	if e.Line != nil {
+		e.Line.DispMorePrompt = saveDisp
+	}
 	if len(hits) == 0 {
 		e.T.WriteRA("`A7:" + e.T.RalGet(lang.NoNewMail))
 		e.T.Println("")
