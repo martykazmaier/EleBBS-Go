@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"elebbs/internal/crc"
 	"elebbs/internal/door"
 	"elebbs/internal/logx"
 	"elebbs/internal/online"
@@ -570,8 +569,7 @@ func (q *vm) cmdSetUserVar(rest string) {
 	case "F":
 		u.ForwardTo = val
 	case "P":
-		u.Password = pascal.UpCase(val)
-		u.PasswordCRC = crc.RA(val, true)
+		userbase.SetPassword(u, val, q.g != nil && q.g.RaConfig.StrictPwdChecking)
 	}
 	_ = userbase.Write(q.g, *u)
 }

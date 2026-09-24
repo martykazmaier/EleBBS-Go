@@ -30,6 +30,7 @@ var defaults = map[int]string{
 	NoSysop:    "** Sysop Remote Access Has Been Disabled **",
 	IncPsw:     "Incorrect, try again.",
 	NoAccess:   "Access denied!",
+	AskMsg:     "Leave a message to the sysop",
 	Password:   "Password: ",
 	InvChoice:  "Invalid choice, please try again: ",
 	NrInRange:  "Please enter a number in the range",

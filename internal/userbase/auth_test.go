@@ -12,17 +12,43 @@ import (
 func TestCheckPasswordCaseInsensitive(t *testing.T) {
 	u := cfgrec.User{PasswordCRC: crc.RA("Secret", true)}
 	for _, pw := range []string{"SECRET", "secret", "Secret", "SeCrEt"} {
-		if !CheckPassword(u, pw) {
+		if !CheckPassword(u, pw, false) {
 			t.Fatalf("CRC password rejected %q", pw)
 		}
 	}
 	u.Password = "Secret"
 	u.PasswordCRC = 0
-	if !CheckPassword(u, "secret") || !CheckPassword(u, "SECRET") {
+	if !CheckPassword(u, "secret", false) || !CheckPassword(u, "SECRET", false) {
 		t.Fatal("plaintext password not case-insensitive")
 	}
-	if CheckPassword(u, "wrong") {
+	if CheckPassword(u, "wrong", false) {
 		t.Fatal("wrong password accepted")
+	}
+}
+
+func TestStrictPasswordIsCaseSensitive(t *testing.T) {
+	var u cfgrec.User
+	SetPassword(&u, "SeCret", true)
+	if !CheckPassword(u, "SeCret", true) {
+		t.Fatal("exact password rejected")
+	}
+	for _, pw := range []string{"secret", "SECRET", "Secret"} {
+		if CheckPassword(u, pw, true) {
+			t.Fatalf("strict accepted %q", pw)
+		}
+	}
+	u.Password = ""
+	if !CheckPassword(u, "SeCret", true) || CheckPassword(u, "secret", true) {
+		t.Fatal("strict CRC compare wrong")
+	}
+	// Turning strict off later still accepts any case.
+	SetPassword(&u, "SeCret", true)
+	if !CheckPassword(u, "secret", false) {
+		t.Fatal("non-strict rejected a strict-set password")
+	}
+	SetPassword(&u, "hunter", false)
+	if u.Password != "HUNTER" || !CheckPassword(u, "Hunter", false) {
+		t.Fatalf("non-strict set: %+v", u)
 	}
 }
 
@@ -46,7 +72,7 @@ func TestSearchCaseInsensitive(t *testing.T) {
 		if got.Name != "SysOp" {
 			t.Fatalf("name=%q", got.Name)
 		}
-		if !CheckPassword(got, "HUNTER") || !CheckPassword(got, "hunter") {
+		if !CheckPassword(got, "HUNTER", false) || !CheckPassword(got, "hunter", false) {
 			t.Fatalf("password failed for user %q", name)
 		}
 	}

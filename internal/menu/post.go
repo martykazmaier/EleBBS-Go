@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"elebbs/internal/cfgrec"
+	"elebbs/internal/config"
+	"elebbs/internal/door"
 	"elebbs/internal/lang"
 	"elebbs/internal/logx"
 	"elebbs/internal/mail"
@@ -165,6 +167,26 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 		return false
 	}
 
+	e.T.WriteRA("`A15:" + e.T.RalGet(lang.Saving))
+	e.T.Println("")
+	num, err := e.saveArticle(a, from, to, subj, lines, priv, fAttach)
+	if err != nil {
+		e.T.WriteRA("`A12:" + err.Error())
+		e.T.Println("")
+		e.T.PressEnter()
+		return false
+	}
+	e.Line.User.MsgsPosted++
+	// A caller who failed the password (BadPwdArea comment) is not logged on;
+	// their user record must not be rewritten.
+	if e.Line.LoggedOn {
+		e.saveUser()
+	}
+	logx.Write(e.G, e.Line.RaNodeNr, '>', "Posted message #"+strconv.Itoa(num)+" in "+a.Name)
+	return true
+}
+
+func (e *Engine) saveArticle(a cfgrec.MessageArea, from, to, subj string, lines []string, priv, fAttach bool) (int, error) {
 	body := strings.Join(lines, "\r\n")
 	tear := mail.TearLine()
 	orig := mail.OriginLine(e.G, a)
@@ -181,7 +203,7 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 	case cfgrec.MsgNetMail:
 		attr = mailJamLocal | mailJamTypeNet
 	}
-	art := mail.Article{
+	return mail.AppendMsg(a.JAMBase, mail.Article{
 		From:    from,
 		To:      to,
 		Subject: subj,
@@ -194,20 +216,77 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 			"PID: " + cfgrec.PidName,
 			mail.MsgIDKludge(e.G, a, 0),
 		},
+	})
+}
+
+func (e *Engine) msgArea(nr int) (cfgrec.MessageArea, bool) {
+	if nr <= 0 || nr > 0xFFFF {
+		return cfgrec.MessageArea{}, false
 	}
-	e.T.WriteRA("`A15:" + e.T.RalGet(lang.Saving))
-	e.T.Println("")
-	num, err := mail.AppendMsg(a.JAMBase, art)
-	if err != nil {
-		e.T.WriteRA("`A12:" + err.Error())
-		e.T.Println("")
-		e.T.PressEnter()
+	if a, ok := mail.FindArea(e.Msgs, uint16(nr)); ok {
+		return a, true
+	}
+	return mail.FindArea(mail.LoadAll(e.G), uint16(nr))
+}
+
+// WriteMessageTo is Pascal WriteMessage(area, ToWho, FromWho, '', ...) for
+// hooks outside the menu engine (BadPwdArea comment at logon).
+func (e *Engine) WriteMessageTo(areaNr int, toWho, from string) bool {
+	a, ok := e.msgArea(areaNr)
+	if !ok {
+		logx.Write(e.G, e.Line.RaNodeNr, '!', "Invalid messageboard specified")
 		return false
 	}
-	e.Line.User.MsgsPosted++
-	e.saveUser()
+	return e.writeMessage(a, from, toWho, "", nil, false)
+}
+
+// FilePost is Pascal FilePost: post file (found like OpenRaFile, node
+// directory first, then SysPath) as a private message, headed by addText.
+// It returns false only when the file cannot be read.
+func (e *Engine) FilePost(areaNr int, from, to, subj, file, addText string) bool {
+	path := e.raFile(file)
+	if path == "" {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var lines []string
+	if addText != "" {
+		lines = append(lines, addText)
+	}
+	text := strings.TrimRight(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n\x1a")
+	if text != "" {
+		for _, l := range strings.Split(text, "\n") {
+			lines = append(lines, e.T.ExpandRA(strings.TrimRight(l, "\r")))
+		}
+	}
+	a, ok := e.msgArea(areaNr)
+	if !ok {
+		logx.Write(e.G, e.Line.RaNodeNr, '!', "Invalid messageboard specified")
+		return true
+	}
+	if !a.IsJAM() || a.JAMBase == "" {
+		logx.Write(e.G, e.Line.RaNodeNr, '!', "FilePost: only JAM areas are supported ("+a.Name+")")
+		return true
+	}
+	num, err := e.saveArticle(a, from, to, subj, lines, true, false)
+	if err != nil {
+		logx.Write(e.G, e.Line.RaNodeNr, '!', "FilePost: "+err.Error())
+		return true
+	}
 	logx.Write(e.G, e.Line.RaNodeNr, '>', "Posted message #"+strconv.Itoa(num)+" in "+a.Name)
 	return true
+}
+
+func (e *Engine) raFile(name string) string {
+	lower := strings.ToLower(name)
+	dirs := []string{door.DropDir(e.G, e.Line)}
+	if e.G != nil {
+		dirs = append(dirs, e.G.RaConfig.SysPath)
+	}
+	return config.FindFile(dirs, lower, strings.ToUpper(name))
 }
 
 const (

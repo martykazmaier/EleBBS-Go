@@ -445,8 +445,14 @@ func WriteAndIndex(g *cfgrec.GlobalCfg, u cfgrec.User) error {
 	return RebuildIndex(g)
 }
 
-func CheckPassword(u cfgrec.User, pw string) bool {
+// CheckPassword compares pw case-insensitively (RA hashes the uppercased
+// password) unless strict (CONFIG.RA StrictPwdChecking) is set, in which case
+// the case must match what SetPassword stored.
+func CheckPassword(u cfgrec.User, pw string, strict bool) bool {
 	pw = strings.TrimRight(pw, "\r\n")
+	if strict {
+		return (u.Password != "" && u.Password == pascal.Trim(pw)) || crc.RA(pw, false) == u.PasswordCRC
+	}
 	if u.Password != "" && pascal.UpCase(u.Password) == pascal.UpCase(pw) {
 		return true
 	}
@@ -455,4 +461,15 @@ func CheckPassword(u cfgrec.User, pw string) bool {
 	}
 	// Older records may have hashed the password as typed instead of uppercased.
 	return crc.RA(pw, false) == u.PasswordCRC
+}
+
+// SetPassword stores pw so CheckPassword with the same strict setting matches it.
+func SetPassword(u *cfgrec.User, pw string, strict bool) {
+	if strict {
+		u.Password = pascal.Trim(pw)
+		u.PasswordCRC = crc.RA(pw, false)
+		return
+	}
+	u.Password = pascal.UpCase(pascal.Trim(pw))
+	u.PasswordCRC = crc.RA(pw, true)
 }

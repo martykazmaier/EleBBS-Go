@@ -35,6 +35,12 @@ type IO struct {
 	push       []byte
 	RunScript  func(name, args string)
 	RunMenu    func(typ byte, data string)
+	// FilePost is Pascal FilePost: post a text file privately to area. It
+	// returns false when the file cannot be opened.
+	FilePost func(area int, from, to, subj, file, addText string) bool
+	// WriteMessage is Pascal WriteMessage: the interactive editor for a new
+	// message to toWho in area.
+	WriteMessage func(area int, toWho, from string) bool
 	// YesNoQuest is Pascal YesNoAsk's YESNO.Q-A path. handled true means
 	// the script returned YES or NO; otherwise AskYesNo falls back to brackets.
 	YesNoQuest    func(defYes bool) (handled bool, yes bool)

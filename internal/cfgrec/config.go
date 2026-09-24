@@ -66,7 +66,7 @@ func ParseConfig(b []byte) Config {
 	c.FastLogon = r.Bool()
 	r.Bool() // AllowSysRem
 	r.Bool() // MonoMode
-	r.Bool() // StrictPwdChecking
+	c.StrictPwdChecking = r.Bool()
 	r.Bool() // DirectWrite
 	r.Bool() // SnowCheck
 	r.I16()  // CreditFactor
@@ -109,7 +109,8 @@ func ParseConfig(b []byte) Config {
 	c.MinPwdLen = r.U8()
 	r.U16()
 	c.HotKeys = r.U8()
-	r.Skip(7) // BorderFore/Back, BarFore/Back, LogStyle, MultiTasker, PwdBoard
+	r.Skip(6) // BorderFore/Back, BarFore/Back, LogStyle, MultiTasker
+	c.PwdBoard = r.U8()
 	r.U16()   // xBufferSize
 	for i := 0; i < 10; i++ {
 		r.PString(60)
@@ -147,7 +148,7 @@ func ParseConfig(b []byte) Config {
 	r.Bool()
 	c.NewUserGroup = r.U8()
 	c.AVATAR = r.U8()
-	r.U8()
+	c.BadPwdArea = r.U8()
 	c.Off.Location = r.I
 	c.Location = r.PString(40)
 	r.U8()
@@ -236,6 +237,9 @@ func ParseConfig(b []byte) Config {
 	}
 	if c.PasswordTries == 0 {
 		c.PasswordTries = 3
+	}
+	if c.LogonTime == 0 {
+		c.LogonTime = 15
 	}
 	if c.LogonPrompt == "" {
 		c.LogonPrompt = "Please enter your full name: "

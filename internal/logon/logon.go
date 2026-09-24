@@ -31,6 +31,10 @@ func Perform(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg) bool {
 	// Pascal PerformLogon: SetIdleTimeLimit(UserTimeOut) before the name prompt.
 	// Baud 0 (local) is exempt inside the input wait.
 	t.ArmIdle(time.Duration(g.RaConfig.UserTimeOut) * time.Second)
+	// Pascal PerformLogon: until finishLogon applies the level limits the
+	// caller has LogonTime minutes. Drop files and the external editor read
+	// this (e.g. the BadPwdArea comment after failed passwords).
+	line.TimeLimit = g.RaConfig.LogonTime
 
 	if line.AutoUser == "" {
 		line.AutoUser = os.Getenv("ELEBBS_AUTOUSER")
@@ -38,7 +42,7 @@ func Perform(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg) bool {
 	}
 	if line.AutoUser != "" {
 		u, ok := userbase.Search(g, line.AutoUser)
-		if !ok || (line.AutoPass != "" && !userbase.CheckPassword(u, line.AutoPass)) {
+		if !ok || (line.AutoPass != "" && !userbase.CheckPassword(u, line.AutoPass, g.RaConfig.StrictPwdChecking)) {
 			t.Println("Login rejected.")
 			return false
 		}
@@ -172,38 +176,86 @@ func getUserName(t *term.IO, g *cfgrec.GlobalCfg, ral *lang.File) (name, psw str
 	}
 }
 
+// getPassword is Pascal GetUsersPassword.
 func getPassword(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, ral *lang.File, u *cfgrec.User, preset string, tries int) bool {
 	if crc.RA("", true) == u.PasswordCRC && u.Password == "" {
 		return true
 	}
+	strict := g.RaConfig.StrictPwdChecking
 	pw := preset
 	if line.EmsiSession && line.EmsiUser.Password != "" {
 		pw = line.EmsiUser.Password
 	}
-	for n := 1; n <= tries; n++ {
+	for n := 1; ; n++ {
+		if n > tries {
+			passwordTriesExceeded(t, g, line, ral, u)
+			return false
+		}
 		if pw == "" {
 			t.WriteRA("`A" + attr(g) + ":")
 			t.WriteRA(ral.Get(lang.Password))
 			var err error
-			pw, err = t.GetString(15, true, true)
+			pw, err = t.GetString(15, true, !strict)
 			if err != nil {
 				return false
 			}
 		}
 		t.WriteRA("`A7:")
-		if userbase.CheckPassword(*u, pw) {
+		if userbase.CheckPassword(*u, pw, strict) {
 			return true
 		}
+		t.Println("")
+		if n+1 <= tries {
+			t.WriteRA(ral.Get(lang.IncPsw))
+			t.Println("")
+		}
+		logx.Write(g, line.RaNodeNr, '!', `Incorrect password : "`+pw+`"`)
+		t.Println("")
 		pw = ""
-		t.Println("")
-		t.WriteRA(ral.Get(lang.IncPsw))
-		t.Println("")
-		logx.Write(g, line.RaNodeNr, '!', "Bad password for "+u.Name)
 	}
+}
+
+const (
+	watchDogFile    = "watchdog.msg"
+	watchDogSubject = "Incorrect password logon attempt"
+	watchDogHeader  = "!!! WARNING - THIS USER ENTERED AN INVALID PASSWORD !!!"
+)
+
+// passwordTriesExceeded is the Counter > PassWordTries branch of Pascal
+// GetUsersPassword: WatchDog notice to the user in PwdBoard, BADPWD, and an
+// optional comment to the sysop in BadPwdArea before the caller hangs up.
+func passwordTriesExceeded(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, ral *lang.File, u *cfgrec.User) {
 	t.WriteRA(ral.Get(lang.NoAccess))
 	t.Println("")
-	term.DisplayHotFile(t, g.RaConfig.TextPath, "BADPWD")
-	return false
+	t.Println("")
+	logx.Write(g, line.RaNodeNr, '!', "Exceeded maximum password attempts, user disconnected")
+
+	if g.RaConfig.PwdBoard != 0 {
+		logx.Write(g, line.RaNodeNr, '!', "WatchDog: User notified of password attempt")
+		if line.Snooping {
+			fmt.Fprintln(os.Stderr, cfgrec.SystemMsgPrefix+"Security watchdog activated, notifying user.")
+		}
+		posted := t.FilePost != nil && t.FilePost(int(g.RaConfig.PwdBoard), g.RaConfig.Sysop, u.Name,
+			watchDogSubject, watchDogFile, watchDogHeader)
+		if !posted {
+			logx.Write(g, line.RaNodeNr, '!', "Unable to open "+watchDogFile)
+		}
+	}
+
+	if term.DisplayHotFile(t, g.RaConfig.TextPath, "BADPWD") {
+		t.PressEnter()
+	}
+
+	if g.RaConfig.BadPwdArea > 0 && t.WriteMessage != nil && t.AskYesNo(lang.AskMsg, false) {
+		t.WriteMessage(int(g.RaConfig.BadPwdArea), g.RaConfig.Sysop, u.Name)
+	}
+}
+
+func samePassword(a, b string, strict bool) bool {
+	if strict {
+		return a == b
+	}
+	return pascal.UpCase(a) == pascal.UpCase(b)
 }
 
 func writeRal(t *term.IO, ral *lang.File, nr int) {
@@ -408,15 +460,16 @@ func newUser(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, ral *lang.Fi
 	if minLen < 1 {
 		minLen = 4
 	}
+	strict := g.RaConfig.StrictPwdChecking
 	var pw string
 	if iemsiNU && pascal.Trim(line.EmsiUser.Password) != "" {
-		setIEMSIPassword(&u, line.EmsiUser)
 		pw = line.EmsiUser.Password
+		userbase.SetPassword(&u, pw, strict)
 	} else {
 		for {
 			t.WriteRA("`A14:")
 			writeRal(t, ral, lang.AskPsw1)
-			pw, err = t.GetString(15, true, true)
+			pw, err = t.GetString(15, true, !strict)
 			if err != nil {
 				return false
 			}
@@ -426,18 +479,17 @@ func newUser(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, ral *lang.Fi
 			}
 			t.WriteRA("`A14:")
 			writeRal(t, ral, lang.AskPsw2)
-			pw2, err := t.GetString(15, true, true)
+			pw2, err := t.GetString(15, true, !strict)
 			if err != nil {
 				return false
 			}
-			if pascal.UpCase(pw) != pascal.UpCase(pw2) {
+			if !samePassword(pw, pw2, strict) {
 				writeRalLn(t, ral, lang.InvPsw1)
 				continue
 			}
 			break
 		}
-		u.Password = pascal.UpCase(pascal.Trim(pw))
-		u.PasswordCRC = crc.RA(pw, true)
+		userbase.SetPassword(&u, pw, strict)
 	}
 	u.DefaultProto = cfgrec.DefaultTransferProto
 	u.Record = -1
@@ -453,8 +505,7 @@ func newUser(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, ral *lang.Fi
 		if pascal.Trim(u.Handle) == "" {
 			u.Handle = name
 		}
-		u.Password = pascal.UpCase(pascal.Trim(pw))
-		u.PasswordCRC = crc.RA(pw, true)
+		userbase.SetPassword(&u, pw, strict)
 		u.Record = -1
 	}
 

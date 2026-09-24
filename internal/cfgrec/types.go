@@ -235,6 +235,11 @@ type Config struct {
 	Sysop          string
 	LogFileName    string
 	FastLogon      bool
+	// StrictPwdChecking makes logon passwords case-sensitive and rejects
+	// trivial new passwords (pwdtrash.ctl, parts of the user's name).
+	StrictPwdChecking bool
+	PwdBoard          byte // WatchDog area: warn the user of bad password attempts
+	BadPwdArea        byte // area for the "leave a message to the sysop" comment
 	OneWord        bool
 	CheckMail      byte
 	ANSI           byte

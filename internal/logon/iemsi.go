@@ -318,12 +318,6 @@ func iemsiBirthDate(hex string) (string, bool) {
 	return tm.Format("01-02-06"), true
 }
 
-func setIEMSIPassword(u *cfgrec.User, em cfgrec.IEMSIUser) {
-	pw := em.Password
-	u.Password = pascal.UpCase(pascal.Trim(pw))
-	u.PasswordCRC = crc.RA(pw, true)
-}
-
 // buildICI is used by tests to assemble a client ICI packet.
 func buildICI(u cfgrec.IEMSIUser) []byte {
 	fields := []string{

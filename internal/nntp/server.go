@@ -144,7 +144,7 @@ func (ss *session) cmdAuth(arg string) {
 		ss.line("381 More authentication information required")
 	case "PASS":
 		u, ok := userbase.Search(ss.cfg.G, ss.pending)
-		if !ok || !userbase.CheckPassword(u, rest) {
+		if !ok || !userbase.CheckPassword(u, rest, ss.cfg.G.RaConfig.StrictPwdChecking) {
 			ss.line("481 Authentication rejected")
 			return
 		}

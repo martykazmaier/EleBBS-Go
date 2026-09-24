@@ -125,6 +125,8 @@ func (s *Session) RunOn(st comm.Stream) error {
 	t.RunMenu = func(typ byte, data string) {
 		eng.ExecType(typ, data)
 	}
+	t.FilePost = eng.FilePost
+	t.WriteMessage = eng.WriteMessageTo
 	s.Line.AnsiOn = true
 	online.ClearNodeMsg(s.G, s.Line.RaNodeNr)
 	online.SetRaBusy(s.G, s.Line.RaNodeNr, true)

@@ -280,7 +280,7 @@ func (ss *session) cmdPass(pw string) {
 		logx.Write(ss.srv.cfg.G, 0, '>', "[FTPSERV] ["+host(ss.c)+"] Anonymous on-line")
 		return
 	}
-	if !ss.gotUser || !userbase.CheckPassword(ss.user, pw) {
+	if !ss.gotUser || !userbase.CheckPassword(ss.user, pw, ss.srv.cfg.G.RaConfig.StrictPwdChecking) {
 		ss.reply(530, "Login incorrect")
 		logx.Write(ss.srv.cfg.G, 0, '!', "[FTPSERV] ["+host(ss.c)+"] Login failed for "+ss.user.Name)
 		return

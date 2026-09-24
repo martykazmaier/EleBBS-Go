@@ -10,7 +10,6 @@ import (
 
 	"elebbs/internal/cfgrec"
 	"elebbs/internal/config"
-	"elebbs/internal/crc"
 	"elebbs/internal/door"
 	"elebbs/internal/files"
 	"elebbs/internal/lang"
@@ -612,7 +611,7 @@ func (e *Engine) getNewPassword(completeNew, pwCheck bool) {
 		e.T.WriteRA("`A14:" + e.T.RalGet(lang.CurrPsw))
 		got, _ := e.T.GetString(15, true, false)
 		e.T.Println("")
-		if crc.RA(got, true) != e.Line.User.PasswordCRC {
+		if !userbase.CheckPassword(e.Line.User, got, e.strictPwd()) {
 			e.T.Println("")
 			e.T.WriteRA(e.T.RalGet(lang.NoAccess))
 			e.T.Println("")
@@ -627,14 +626,20 @@ func (e *Engine) getNewPassword(completeNew, pwCheck bool) {
 	if minLen <= 0 {
 		minLen = 4
 	}
+	strict := e.strictPwd()
 	var pw string
 	for pw == "" {
 		e.T.Println("")
 		e.T.WriteRA("`A14:" + e.T.RalGet(lang.AskPsw1))
 		pw, _ = e.T.GetString(15, true, false)
 		e.T.Println("")
-		pw = pascal.UpCase(pw)
+		if !strict {
+			pw = pascal.UpCase(pw)
+		}
 		e.T.Println("")
+		if strict && pw != "" && e.weakPassword(pw) {
+			pw = ""
+		}
 		if pw == "" {
 			e.T.WriteRA("`A14:" + e.T.RalGet(lang.InvPsw2))
 			e.T.Println("")
@@ -642,7 +647,7 @@ func (e *Engine) getNewPassword(completeNew, pwCheck bool) {
 			e.T.WriteRA("`A14:" + e.T.RalGet(lang.PswShort1) + " " + strconv.Itoa(minLen) + " " + e.T.RalGet(lang.Chars))
 			e.T.Println("")
 			pw = ""
-		} else if crc.RA(pw, true) == e.Line.User.PasswordCRC {
+		} else if userbase.CheckPassword(e.Line.User, pw, strict) {
 			e.T.WriteRA("`A12:" + e.T.RalGet(lang.OtherPsw))
 			e.T.Println("")
 			pw = ""
@@ -657,7 +662,10 @@ func (e *Engine) getNewPassword(completeNew, pwCheck bool) {
 		e.T.WriteRA("`A14:" + e.T.RalGet(lang.AskPsw2))
 		pw2, _ := e.T.GetString(15, true, false)
 		e.T.Println("")
-		if pascal.UpCase(pw2) != pw {
+		if !strict {
+			pw2 = pascal.UpCase(pw2)
+		}
+		if pw2 != pw {
 			e.T.Println("")
 			e.T.WriteRA("`A14:" + e.T.RalGet(lang.InvPsw1))
 			e.T.Println("")
@@ -670,8 +678,7 @@ func (e *Engine) getNewPassword(completeNew, pwCheck bool) {
 			}
 		}
 	}
-	e.Line.User.Password = pw
-	e.Line.User.PasswordCRC = crc.RA(pw, true)
+	userbase.SetPassword(&e.Line.User, pw, strict)
 	e.saveUser()
 	if !completeNew {
 		e.T.Println("")
@@ -680,6 +687,47 @@ func (e *Engine) getNewPassword(completeNew, pwCheck bool) {
 		e.T.Println("")
 		e.T.PressEnter()
 	}
+}
+
+func (e *Engine) strictPwd() bool {
+	return e.G != nil && e.G.RaConfig.StrictPwdChecking
+}
+
+// weakPassword is GetNewPassword's StrictPwdChecking test: the password may
+// not be listed in pwdtrash.ctl or equal the user's full, first or last name.
+func (e *Engine) weakPassword(pw string) bool {
+	up := pascal.UpCase(pascal.Trim(pw))
+	name := pascal.UpCase(pascal.Trim(e.Line.User.Name))
+	if up == name {
+		return true
+	}
+	if words := strings.Fields(name); len(words) > 0 && (up == words[0] || up == words[len(words)-1]) {
+		return true
+	}
+	return e.searchCtlFile("pwdtrash.ctl", pw)
+}
+
+// searchCtlFile is Pascal SearchCtlFile without wildcards: true when any line
+// of the ctl file contains s (case-insensitive).
+func (e *Engine) searchCtlFile(ctl, s string) bool {
+	want := pascal.UpCase(pascal.Trim(s))
+	if want == "" {
+		return false
+	}
+	path := e.raFile(ctl)
+	if path == "" {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(pascal.UpCase(pascal.Trim(strings.TrimRight(line, "\r"))), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) dirList(data string) {

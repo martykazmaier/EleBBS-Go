@@ -44,7 +44,7 @@ func Listen(cfg Config) error {
 		ServerVersion: "SSH-2.0-EleBBS",
 		PasswordCallback: func(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 			u, ok := userbase.Search(cfg.G, conn.User())
-			if !ok || !userbase.CheckPassword(u, string(pass)) {
+			if !ok || !userbase.CheckPassword(u, string(pass), cfg.G.RaConfig.StrictPwdChecking) {
 				return nil, fmt.Errorf("access denied")
 			}
 			return &ssh.Permissions{Extensions: map[string]string{
