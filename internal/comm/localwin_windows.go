@@ -18,7 +18,8 @@ var (
 )
 
 type conWindow struct {
-	h windows.Handle
+	out *os.File // owns h; its finalizer would close the handle
+	h   windows.Handle
 }
 
 // OpenLocalWindow is the node console as a sysop drawing surface. Nil when
@@ -34,7 +35,7 @@ func OpenLocalWindow() LocalWindow {
 		out.Close()
 		return nil
 	}
-	return &conWindow{h: h}
+	return &conWindow{out: out, h: h}
 }
 
 func (c *conWindow) info() windows.ConsoleScreenBufferInfo {

@@ -193,7 +193,7 @@ func Exec(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, name string, op
 			q.labels[lab] = i
 		}
 	}
-	for q.pc < len(q.lines) && !q.done {
+	for q.pc < len(q.lines) && !q.done && !q.t.Gone() {
 		q.exec(q.lines[q.pc])
 		q.pc++
 	}
@@ -560,7 +560,7 @@ func (q *vm) includeQA(spec string) {
 	q.labels = labels
 	q.quesDir = filepath.Dir(path)
 	q.pc = 0
-	for q.pc < len(q.lines) && !q.done {
+	for q.pc < len(q.lines) && !q.done && !q.t.Gone() {
 		q.exec(q.lines[q.pc])
 		q.pc++
 	}

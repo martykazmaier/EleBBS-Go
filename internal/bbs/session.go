@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"elebbs/internal/cfgrec"
 	"elebbs/internal/cmdline"
@@ -149,6 +150,9 @@ func (s *Session) RunOn(st comm.Stream) error {
 		s.sysop.T = t
 		t.Local = s.sysop.Keys
 		t.LocalCommand = s.sysop.Command
+		done := make(chan struct{})
+		defer close(done)
+		go s.haltAfterHangUp(t, st, done)
 	}
 	s.Line.AnsiOn = true
 	online.ClearNodeMsg(s.G, s.Line.RaNodeNr)
@@ -182,6 +186,31 @@ func (s *Session) RunOn(st comm.Stream) error {
 	}
 	logx.Write(s.G, s.Line.RaNodeNr, '-', s.Line.User.Name+" logged off")
 	return nil
+}
+
+// hangUpGrace is how long an Alt-H hang-up may take to unwind the session
+// before the node exits anyway.
+const hangUpGrace = 5 * time.Second
+
+// haltAfterHangUp is Pascal HangUp's System.Halt: once the sysop hangs up,
+// the node ends even if something is still busy with the caller.
+func (s *Session) haltAfterHangUp(t *term.IO, st comm.Stream, done <-chan struct{}) {
+	select {
+	case <-done:
+		return
+	case <-t.HangUpC():
+	}
+	select {
+	case <-done:
+		return
+	case <-time.After(hangUpGrace):
+	}
+	logx.Write(s.G, s.Line.RaNodeNr, '-', s.Line.User.Name+" logged off")
+	online.Kill(s.G, s.Line)
+	online.SetRaBusy(s.G, s.Line.RaNodeNr, false)
+	files.ClearTagList(door.DropDir(s.G, s.Line))
+	_ = st.Close()
+	os.Exit(0)
 }
 
 func mode(s *Session) string {

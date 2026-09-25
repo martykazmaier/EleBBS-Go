@@ -130,7 +130,11 @@ func (q *vm) cmdExtra(cmd, rest string) {
 		}
 	case "WASSYSOPKEY":
 		dst := atoi(strings.TrimSpace(rest))
-		q.put(dst, "NO")
+		if q.t != nil && q.t.FromSysop {
+			q.put(dst, "YES")
+		} else {
+			q.put(dst, "NO")
+		}
 	case "SETRESULT":
 		q.result = q.value(strings.TrimSpace(rest))
 	case "SETRESULTVAR":
@@ -182,10 +186,14 @@ func (q *vm) cmdExtra(cmd, rest string) {
 		}
 	case "EXEC":
 		q.cmdExec(rest)
-	case "EMULATEINPUT", "EMULATESYSINPUT":
+	case "EMULATEINPUT":
 		q.t.PutInBuffer(q.value(strings.TrimSpace(rest)))
-	case "EMULATEVAR", "EMULATESYSVAR":
+	case "EMULATESYSINPUT":
+		q.t.PutSysopInBuffer(q.value(strings.TrimSpace(rest)))
+	case "EMULATEVAR":
 		q.t.PutInBuffer(q.get(atoi(strings.TrimSpace(rest))))
+	case "EMULATESYSVAR":
+		q.t.PutSysopInBuffer(q.get(atoi(strings.TrimSpace(rest))))
 	case "MENUCMD", "MENUCMND":
 		typWord, data := firstWord(rest)
 		typ := atoi(typWord)
@@ -486,9 +494,6 @@ func (q *vm) cmdGetRaw(rest string) {
 		return
 	}
 	q.put(dst, "")
-	if ch >= 'a' && ch <= 'z' {
-		ch -= 32
-	}
 	switch ch {
 	case 127:
 		q.put(dst, "DELETE")
@@ -499,6 +504,7 @@ func (q *vm) cmdGetRaw(rest string) {
 			q.put(dst, "INSERT")
 			return
 		}
+		ch = n
 	case 27:
 		q.putArrow(dst, q.t.GetArrowKeys())
 		return
@@ -507,7 +513,7 @@ func (q *vm) cmdGetRaw(rest string) {
 		ch = '\r'
 	}
 	if q.get(dst) == "" {
-		q.put(dst, string(ch))
+		q.put(dst, pascal.FromCP437([]byte{ch}))
 	}
 }
 

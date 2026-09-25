@@ -10,8 +10,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+var procMapVirtualKeyW = windows.NewLazySystemDLL("user32.dll").NewProc("MapVirtualKeyW")
+
 type conKeys struct {
-	h windows.Handle
+	in *os.File // owns h; its finalizer would close the handle
+	h  windows.Handle
 }
 
 // OpenLocalKeys is the node window keyboard for a remote session. Nil when
@@ -31,7 +34,7 @@ func OpenLocalKeys() LocalKeys {
 	const enableVTInput = 0x0200
 	mode &^= windows.ENABLE_LINE_INPUT | windows.ENABLE_ECHO_INPUT | windows.ENABLE_PROCESSED_INPUT | enableVTInput
 	_ = windows.SetConsoleMode(h, mode)
-	return &conKeys{h: h}
+	return &conKeys{in: in, h: h}
 }
 
 const (
@@ -83,6 +86,10 @@ func consoleLocalKey(rec conInputRecord) (LocalKey, bool) {
 	alt := rec.ControlKeyState&(rightAlt|leftAlt) != 0
 	ctrl := rec.ControlKeyState&(rightCtrl|leftCtrl) != 0
 	scan := byte(rec.VirtualScanCode)
+	if scan == 0 && vk != 0 {
+		r, _, _ := procMapVirtualKeyW.Call(uintptr(vk), 0)
+		scan = byte(r)
+	}
 	if alt && !ctrl {
 		if vk >= vkF1 && vk <= vkF10 {
 			return LocalKey{Scan: 104 + byte(vk-vkF1)}, true

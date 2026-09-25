@@ -9,6 +9,7 @@ import (
 
 	"elebbs/internal/cfgrec"
 	"elebbs/internal/comm"
+	"elebbs/internal/lang"
 	"elebbs/internal/pascal"
 	"elebbs/internal/term"
 )
@@ -158,6 +159,15 @@ func TestChatSysopTypesUntilEsc(t *testing.T) {
 	}
 	if n.chatting {
 		t.Fatal("chat flag should be cleared")
+	}
+}
+
+func TestChatEndsOnScriptSysopEsc(t *testing.T) {
+	n, st, _ := newNode(t, "")
+	n.T.PutSysopInBuffer("\x1b")
+	n.Chat()
+	if !strings.Contains(st.out.String(), lang.Default(lang.EndCht)) {
+		t.Fatalf("end-of-chat prompt missing: %q", st.out.String())
 	}
 }
 

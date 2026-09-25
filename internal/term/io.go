@@ -33,6 +33,7 @@ type IO struct {
 	Attr       byte
 	mu         sync.Mutex
 	push       []byte
+	pushSysop  []bool // parallel to push: Pascal KeyBuffer[].IsSysOp
 	RunScript  func(name, args string)
 	RunMenu    func(typ byte, data string)
 	// FilePost is Pascal FilePost: post a text file privately to area. It
@@ -70,6 +71,8 @@ type IO struct {
 	// FromSysop is Pascal LineCfg.SysOpKey: the last key came from Local.
 	FromSysop bool
 	hung      bool
+	hangC     chan struct{}
+	lost      bool // the caller's stream failed (carrier lost)
 }
 
 // ErrIdle is Pascal CheckIdle's inactivity hangup.
@@ -85,14 +88,40 @@ const localPoll = 50 * time.Millisecond
 // HangUp is Pascal HangUp: input fails and output is dropped, so the session
 // unwinds as if carrier was lost; the caller is disconnected when it ends.
 func (t *IO) HangUp() {
-	if t != nil {
-		t.hung = true
+	if t == nil {
+		return
 	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.hung {
+		return
+	}
+	t.hung = true
+	if t.hangC == nil {
+		t.hangC = make(chan struct{})
+	}
+	close(t.hangC)
 }
 
 // HungUp reports that HangUp ended this session.
 func (t *IO) HungUp() bool {
 	return t != nil && t.hung
+}
+
+// HangUpC is closed by HangUp.
+func (t *IO) HangUpC() <-chan struct{} {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.hangC == nil {
+		t.hangC = make(chan struct{})
+	}
+	return t.hangC
+}
+
+// Gone is Pascal ProgTerminated: the caller was hung up, timed out or lost
+// carrier, so no more input will come.
+func (t *IO) Gone() bool {
+	return t != nil && (t.hung || t.idleDone || t.lost)
 }
 
 // PushKey is Pascal PutInBuffer of one raw key (#255 redraws the menu).
@@ -112,12 +141,8 @@ func (t *IO) pollLocal() (byte, bool) {
 			return k.Ch, true
 		}
 		if seq := localCursorKey(k.Scan); seq != "" {
-			t.pushBytes([]byte(seq))
-			t.mu.Lock()
-			b := t.push[0]
-			t.push = t.push[1:]
-			t.mu.Unlock()
-			return b, true
+			t.pushFrom([]byte(seq[1:]), true)
+			return seq[0], true
 		}
 		if t.LocalCommand != nil {
 			t.LocalCommand(k.Scan)
@@ -474,15 +499,11 @@ func (t *IO) GetKey(timeout time.Duration) (byte, error) {
 		if err := t.checkIdle(); err != nil {
 			return 0, err
 		}
-		t.mu.Lock()
-		if len(t.push) > 0 {
-			b := t.push[0]
-			t.push = t.push[1:]
-			t.mu.Unlock()
+		if b, sysop, ok := t.popPush(); ok {
+			t.FromSysop = sysop
 			t.touchIdle()
 			return b, nil
 		}
-		t.mu.Unlock()
 		if b, ok := t.pollLocal(); ok {
 			t.FromSysop = true
 			t.touchIdle()
@@ -534,6 +555,9 @@ func (t *IO) GetKey(timeout time.Duration) (byte, error) {
 				return 0, err
 			}
 			continue
+		}
+		if !t.S.Local() {
+			t.lost = true
 		}
 		return 0, err
 	}
@@ -691,7 +715,7 @@ func (t *IO) PeekKey() (byte, bool) {
 	if err != nil {
 		return 0, false
 	}
-	t.PutBack(string([]byte{ch}))
+	t.pushFrom([]byte{ch}, t.FromSysop)
 	return ch, true
 }
 
@@ -731,6 +755,7 @@ func (t *IO) eatPushedLineEndMate(got byte) {
 	t.mu.Lock()
 	if len(t.push) > 0 && t.push[0] == mate {
 		t.push = t.push[1:]
+		t.pushSysop = t.pushSysop[1:]
 	}
 	t.mu.Unlock()
 }
@@ -816,6 +841,16 @@ func (t *IO) PutBack(s string) {
 
 // PutInBuffer is Pascal InputObj.PutInBuffer: ';' becomes CR, '_' becomes space.
 func (t *IO) PutInBuffer(s string) {
+	t.putInBuffer(s, false)
+}
+
+// PutSysopInBuffer is PutInBuffer with FromSysOp set, so the keys count as
+// typed on the node window (Q-A EMULATESYSINPUT / EMULATESYSVAR).
+func (t *IO) PutSysopInBuffer(s string) {
+	t.putInBuffer(s, true)
+}
+
+func (t *IO) putInBuffer(s string, sysop bool) {
 	if s == "" {
 		return
 	}
@@ -828,16 +863,37 @@ func (t *IO) PutInBuffer(s string) {
 			b[i] = ' '
 		}
 	}
-	t.pushBytes(b)
+	t.pushFrom(b, sysop)
 }
 
 func (t *IO) pushBytes(b []byte) {
+	t.pushFrom(b, false)
+}
+
+// pushFrom puts b in front of the key buffer; sysop marks node-window keys.
+func (t *IO) pushFrom(b []byte, sysop bool) {
 	if len(b) == 0 {
 		return
 	}
+	from := make([]bool, len(b))
+	for i := range from {
+		from[i] = sysop
+	}
 	t.mu.Lock()
-	t.push = append(b, t.push...)
+	t.push = append(append([]byte{}, b...), t.push...)
+	t.pushSysop = append(from, t.pushSysop...)
 	t.mu.Unlock()
+}
+
+func (t *IO) popPush() (b byte, sysop, ok bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.push) == 0 {
+		return 0, false, false
+	}
+	b, sysop = t.push[0], t.pushSysop[0]
+	t.push, t.pushSysop = t.push[1:], t.pushSysop[1:]
+	return b, sysop, true
 }
 
 func (t *IO) GetString(max int, hidden, capitalize bool) (string, error) {

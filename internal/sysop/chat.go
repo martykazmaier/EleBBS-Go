@@ -42,14 +42,14 @@ func (n *Node) Chat() {
 	t.Println("")
 	t.Println("")
 	if !term.DisplayHotFile(t, cfg.TextPath, "startcht") {
-		t.WriteRA(t.RalStr(lang.StartCht) + "\r\n")
+		t.WriteRA(t.RalGet(lang.StartCht) + "\r\n")
 	}
 	if cfg.ChatCommand != "" && line.LoggedOn {
 		door.Run(t, n.G, line, nil, cfg.ChatCommand, false)
 	} else {
 		t.Println("")
 		if line.Baud == 0 {
-			t.WriteRA("`A14:" + t.RalStr(lang.NoUser1) + "\r\n")
+			t.WriteRA("`A14:" + t.RalGet(lang.NoUser1) + "\r\n")
 		} else {
 			if cfg.AutoChatCapture {
 				n.openLog()
@@ -61,7 +61,7 @@ func (n *Node) Chat() {
 	}
 	n.closeLog()
 	if !term.DisplayHotFile(t, cfg.TextPath, "endcht") {
-		t.WriteRA("`A7:" + t.RalStr(lang.EndCht) + "\r\n")
+		t.WriteRA("`A7:" + t.RalGet(lang.EndCht) + "\r\n")
 	}
 	t.PushKey(255)
 }

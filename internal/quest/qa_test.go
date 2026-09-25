@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"elebbs/internal/cfgrec"
+	"elebbs/internal/comm"
 	"elebbs/internal/term"
 )
 
@@ -691,6 +692,84 @@ func TestGetRecordInfoHook(t *testing.T) {
 	}
 }
 
+type nodeKeys struct{ keys []byte }
+
+func (k *nodeKeys) Poll() (comm.LocalKey, bool) {
+	if len(k.keys) == 0 {
+		return comm.LocalKey{}, false
+	}
+	c := k.keys[0]
+	k.keys = k.keys[1:]
+	return comm.LocalKey{Ch: c}, true
+}
+
+func TestWasSysopKeyAfterKeyPress(t *testing.T) {
+	tio := term.New(&keyMem{in: []byte("c")}, &cfgrec.GlobalCfg{}, &cfgrec.LineCfg{})
+	tio.Local = &nodeKeys{keys: []byte("s")}
+	q := &vm{t: tio}
+	for _, want := range []struct{ key, sysop string }{{"s", "YES"}, {"c", "NO"}} {
+		q.exec("KEYPRESS 1")
+		if q.get(1) != "YES" {
+			t.Fatalf("KEYPRESS = %q, want YES", q.get(1))
+		}
+		q.exec("GETRAWKEY 2")
+		q.exec("WASSYSOPKEY 3")
+		if q.get(2) != want.key || q.get(3) != want.sysop {
+			t.Fatalf("key %q sysop %q, want %q %q", q.get(2), q.get(3), want.key, want.sysop)
+		}
+	}
+}
+
+func TestGetRawKeyKeepsCase(t *testing.T) {
+	q := &vm{t: term.New(&keyMem{in: []byte("a\xb0")}, &cfgrec.GlobalCfg{}, &cfgrec.LineCfg{})}
+	q.cmdGetRaw("1")
+	if q.get(1) != "a" {
+		t.Fatalf("GETRAWKEY = %q, want lowercase a", q.get(1))
+	}
+	q.cmdGetRaw("1")
+	if q.get(1) != "░" {
+		t.Fatalf("GETRAWKEY = %q, want CP437 block", q.get(1))
+	}
+}
+
+func TestEmulateSysVarIsSysopInput(t *testing.T) {
+	tio := term.New(&keyMem{}, &cfgrec.GlobalCfg{}, &cfgrec.LineCfg{})
+	q := &vm{t: tio}
+	q.put(1, "\x1b")
+	q.exec("EMULATESYSVAR 1")
+	q.exec("EMULATEINPUT x")
+	if ch, _ := tio.GetKey(0); ch != 'x' || tio.FromSysop {
+		t.Fatalf("EMULATEINPUT key %q sysop %v", ch, tio.FromSysop)
+	}
+	if ch, _ := tio.GetKey(0); ch != 0x1b || !tio.FromSysop {
+		t.Fatalf("EMULATESYSVAR key %q sysop %v", ch, tio.FromSysop)
+	}
+}
+
+func TestScriptStopsAfterHangUp(t *testing.T) {
+	dir := t.TempDir()
+	script := ":LOOP\r\nGETRAWKEY 1\r\nGOTO LOOP\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "spin.q-a"), []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	line := &cfgrec.LineCfg{}
+	line.Language.QuesPath = dir
+	tio := term.New(&keyMem{}, g, line)
+	tio.HangUp()
+	done := make(chan struct{})
+	go func() {
+		Exec(tio, g, line, "spin", ScriptOpts{NoLog: true})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Q-A script kept running after the caller was hung up")
+	}
+}
+
 func TestGetRawKeyArrowsKeepCR(t *testing.T) {
 	st := &keyMem{in: []byte{27, '[', 'A', '\r'}}
 	g := &cfgrec.GlobalCfg{}
@@ -795,14 +874,14 @@ func TestAssignPercentIsIndirect(t *testing.T) {
 	}
 }
 
-func TestGetRawKeyUpperQ(t *testing.T) {
+func TestGetRawKeyLowerQ(t *testing.T) {
 	st := &keyMem{in: []byte{'q', '\n'}}
 	g := &cfgrec.GlobalCfg{}
 	line := &cfgrec.LineCfg{}
 	q := &vm{t: term.New(st, g, line)}
 	q.cmdGetRaw("16")
-	if q.get(16) != "Q" {
-		t.Fatalf("q got %q want Q", q.get(16))
+	if q.get(16) != "q" || !q.testIf(`16 = "Q"`) {
+		t.Fatalf("q got %q, want q that still matches Q", q.get(16))
 	}
 	q.cmdGetRaw("16")
 	if q.get(16) != "\r" {
