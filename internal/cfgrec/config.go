@@ -82,12 +82,12 @@ func ParseConfig(b []byte) Config {
 	c.Off.OneWord = r.I
 	c.OneWord = r.Bool()
 	c.CheckMail = r.U8()
-	r.Bool()
-	r.Bool()
-	r.Bool()
-	r.Bool()
-	r.Bool()
-	r.Bool()
+	r.Bool() // AskVoicePhone
+	r.Bool() // AskDataPhone
+	r.Bool() // DoFullMailCheck
+	r.Bool() // AllowFileShells
+	r.Bool() // FixUploadDates
+	c.FreezeChat = r.Bool()
 	c.Off.ANSI = r.I
 	c.ANSI = r.U8()
 	c.ClearScreen = r.U8()
@@ -102,18 +102,23 @@ func ParseConfig(b []byte) Config {
 	r.Flags()
 	c.NormFore = r.U8()
 	c.NormBack = r.U8()
-	r.Skip(6) // stat/hi/wind colors
+	r.Skip(3) // StatFore, StatBack, HiBack
+	c.HiFore = r.U8()
+	c.WindFore = r.U8()
+	c.WindBack = r.U8()
 	r.Skip(8) // exit levels
 	c.MultiLine = r.Bool()
 	c.Off.MinPwdLen = r.I
 	c.MinPwdLen = r.U8()
 	r.U16()
 	c.HotKeys = r.U8()
-	r.Skip(6) // BorderFore/Back, BarFore/Back, LogStyle, MultiTasker
+	c.BorderFore = r.U8()
+	c.BorderBack = r.U8()
+	r.Skip(4) // BarFore/Back, LogStyle, MultiTasker
 	c.PwdBoard = r.U8()
-	r.U16()   // xBufferSize
+	r.U16() // xBufferSize
 	for i := 0; i < 10; i++ {
-		r.PString(60)
+		c.FKeys[i] = r.PString(60)
 	}
 	r.Bool()
 	r.U8()
@@ -165,8 +170,8 @@ func ParseConfig(b []byte) Config {
 	r.PString(40)
 	r.PString(40)
 	r.PString(40)
-	r.Skip(3)
-	r.PString(60)
+	r.Skip(3) // Exit7200/12000/14400
+	c.ChatCommand = r.PString(60)
 	r.U8()
 	c.NewUserLang = r.U8()
 	c.LanguagePrompt = r.PString(40)
@@ -184,7 +189,7 @@ func ParseConfig(b []byte) Config {
 	r.PString(70)
 	r.Bool()
 	c.SemPath = r.PString(60)
-	r.Bool()
+	c.AutoChatCapture = r.Bool()
 	c.Off.FileBase = r.I
 	c.FileBase = r.PString(60)
 	r.Bool()
@@ -218,15 +223,15 @@ func ParseConfig(b []byte) Config {
 	r.U16()
 	r.Bool()
 	r.Skip(400) // DefaultCombined
-	r.Bool()
-	r.Bool()
-	r.U8()
-	r.Bool()
-	r.Skip(6)
-	r.Bool()
-	r.Bool()
-	r.Bool()
-	r.U8()
+	r.Bool()    // AskForSex
+	r.Bool()    // AskForAddress
+	r.U8()      // DLdesc
+	r.Bool()    // NewPhoneScan
+	r.Skip(6)   // Exit21k..Exit64k
+	r.Bool()    // TagLogoffWarning
+	c.LimitLocal = r.Bool()
+	c.SavePasswords = r.Bool()
+	r.U8() // BlankLogins
 	r.PString(60)
 	r.Skip(2)
 	r.Bool()

@@ -61,10 +61,93 @@ type IO struct {
 	idleOn     bool
 	idleWarned bool
 	idleDone   bool
+	// Local is the node window keyboard of a remote session; its keys are
+	// input as if the caller typed them (Pascal Crt.ReadKey in ReadKey).
+	Local comm.LocalKeys
+	// LocalCommand is Pascal LocalCommand: extended node-window keys
+	// (Alt-C, Alt-E, Alt-H, ...) by scan code.
+	LocalCommand func(scan byte)
+	// FromSysop is Pascal LineCfg.SysOpKey: the last key came from Local.
+	FromSysop bool
+	hung      bool
 }
 
 // ErrIdle is Pascal CheckIdle's inactivity hangup.
 var ErrIdle = errors.New("inactivity timeout")
+
+// ErrHangup is Pascal HangUp from the node window (Alt-H).
+var ErrHangup = errors.New("sysop hung up")
+
+// localPoll is how often GetKey looks at the node window keyboard while it
+// waits for the caller.
+const localPoll = 50 * time.Millisecond
+
+// HangUp is Pascal HangUp: input fails and output is dropped, so the session
+// unwinds as if carrier was lost; the caller is disconnected when it ends.
+func (t *IO) HangUp() {
+	if t != nil {
+		t.hung = true
+	}
+}
+
+// HungUp reports that HangUp ended this session.
+func (t *IO) HungUp() bool {
+	return t != nil && t.hung
+}
+
+// PushKey is Pascal PutInBuffer of one raw key (#255 redraws the menu).
+func (t *IO) PushKey(b byte) {
+	t.pushBytes([]byte{b})
+}
+
+// pollLocal returns the next node-window key, running LocalCommand for
+// extended keys. Cursor keys become the caller's ANSI sequences.
+func (t *IO) pollLocal() (byte, bool) {
+	for t.Local != nil && !t.hung {
+		k, ok := t.Local.Poll()
+		if !ok {
+			return 0, false
+		}
+		if k.Ch != 0 {
+			return k.Ch, true
+		}
+		if seq := localCursorKey(k.Scan); seq != "" {
+			t.pushBytes([]byte(seq))
+			t.mu.Lock()
+			b := t.push[0]
+			t.push = t.push[1:]
+			t.mu.Unlock()
+			return b, true
+		}
+		if t.LocalCommand != nil {
+			t.LocalCommand(k.Scan)
+		}
+	}
+	return 0, false
+}
+
+// localCursorKey is Pascal LocalCommand's cursor-key table.
+func localCursorKey(scan byte) string {
+	switch scan {
+	case 75:
+		return "\x1b[D"
+	case 77:
+		return "\x1b[C"
+	case 72:
+		return "\x1b[A"
+	case 80:
+		return "\x1b[B"
+	case 82:
+		return "\x16\x09"
+	case 83:
+		return "\x7f"
+	case 71:
+		return "\x1b[H"
+	case 79:
+		return "\x1b[K"
+	}
+	return ""
+}
 
 func New(s comm.Stream, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg) *IO {
 	length := int(line.User.ScreenLength)
@@ -95,6 +178,9 @@ func New(s comm.Stream, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg) *IO {
 func makeAttr(fore, back byte) byte { return (back << 4) | (fore & 0x0F) }
 
 func (t *IO) WriteRaw(p []byte) error {
+	if t.hung {
+		return nil
+	}
 	t.trackCursor(p)
 	_, err := t.S.Write(p)
 	return err
@@ -122,6 +208,9 @@ func (t *IO) GotoXY(x, y int) {
 		y = 1
 	}
 	t.CurX, t.CurY = x, y
+	if t.hung {
+		return
+	}
 	_, _ = t.S.Write([]byte(fmt.Sprintf("\x1b[%d;%dH", y, x)))
 }
 
@@ -379,6 +468,9 @@ func (t *IO) GetKey(timeout time.Duration) (byte, error) {
 	}
 	defer func() { _ = t.S.SetReadDeadline(time.Time{}) }()
 	for {
+		if t.hung {
+			return 0, ErrHangup
+		}
 		if err := t.checkIdle(); err != nil {
 			return 0, err
 		}
@@ -391,6 +483,14 @@ func (t *IO) GetKey(timeout time.Duration) (byte, error) {
 			return b, nil
 		}
 		t.mu.Unlock()
+		if b, ok := t.pollLocal(); ok {
+			t.FromSysop = true
+			t.touchIdle()
+			return b, nil
+		}
+		if t.hung {
+			return 0, ErrHangup
+		}
 
 		wait := time.Duration(-1)
 		if timed {
@@ -401,6 +501,9 @@ func (t *IO) GetKey(timeout time.Duration) (byte, error) {
 		}
 		if slice := t.idleSlice(); slice >= 0 && (wait < 0 || slice < wait) {
 			wait = slice
+		}
+		if t.Local != nil && (wait < 0 || wait > localPoll) {
+			wait = localPoll
 		}
 		if wait == 0 {
 			if err := t.checkIdle(); err != nil {
@@ -419,6 +522,7 @@ func (t *IO) GetKey(timeout time.Duration) (byte, error) {
 		var buf [1]byte
 		n, err := t.S.Read(buf[:])
 		if n == 1 {
+			t.FromSysop = false
 			t.touchIdle()
 			return buf[0], nil
 		}

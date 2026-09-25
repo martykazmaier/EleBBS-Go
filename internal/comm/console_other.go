@@ -4,6 +4,7 @@ package comm
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"time"
 )
@@ -22,6 +23,9 @@ func (c *consoleStream) Write(b []byte) (int, error)       { return os.Stdout.Wr
 func (c *consoleStream) Close() error                      { return nil }
 func (c *consoleStream) SetReadDeadline(t time.Time) error { c.rdl = t; return nil }
 func (c *consoleStream) SetWriteDeadline(time.Time) error  { return nil }
+
+// ConsoleScreen has no node window outside Windows.
+func ConsoleScreen() io.Writer { return nil }
 
 func OpenInherited(handle uintptr) (Stream, error) {
 	return nil, fmt.Errorf("inherited WinSock handles require Windows")

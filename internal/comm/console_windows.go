@@ -4,6 +4,7 @@ package comm
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"time"
 	"unicode/utf16"
@@ -214,6 +215,84 @@ func (c *consoleStream) Write(b []byte) (int, error) {
 		}
 	}
 	return len(b), nil
+}
+
+var (
+	procFillConsoleOutputCharacterW = modKernel32.NewProc("FillConsoleOutputCharacterW")
+	procFillConsoleOutputAttribute  = modKernel32.NewProc("FillConsoleOutputAttribute")
+	procSetConsoleTextAttribute     = modKernel32.NewProc("SetConsoleTextAttribute")
+)
+
+// ConsoleScreen is the node window as a snoop target: CP437/ANSI session
+// output rendered on this process's console with Win32 calls, so it works on
+// legacy console hosts without VT processing. Nil when there is no console.
+func ConsoleScreen() io.Writer {
+	out, err := os.OpenFile("CONOUT$", os.O_RDWR, 0)
+	if err != nil {
+		return nil
+	}
+	h := windows.Handle(out.Fd())
+	var mode uint32
+	if err := windows.GetConsoleMode(h, &mode); err != nil {
+		out.Close()
+		return nil
+	}
+	_ = windows.SetConsoleMode(h, mode|windows.ENABLE_PROCESSED_OUTPUT|windows.ENABLE_WRAP_AT_EOL_OUTPUT)
+	return newANSIScreen(&conOps{out: out, h: h})
+}
+
+type conOps struct {
+	out  *os.File
+	h    windows.Handle
+	attr uint16
+}
+
+func coordArg(x, y int) uintptr { return uintptr(uint16(x)) | uintptr(uint16(y))<<16 }
+
+func (c *conOps) info() windows.ConsoleScreenBufferInfo {
+	var bi windows.ConsoleScreenBufferInfo
+	_ = windows.GetConsoleScreenBufferInfo(c.h, &bi)
+	return bi
+}
+
+func (c *conOps) Text(b []byte) {
+	u := utf16.Encode([]rune(string(vtGlyphs(b))))
+	if len(u) == 0 {
+		return
+	}
+	var n uint32
+	_ = windows.WriteConsole(c.h, &u[0], uint32(len(u)), &n, nil)
+}
+
+func (c *conOps) SetAttr(a uint16) {
+	c.attr = a
+	procSetConsoleTextAttribute.Call(uintptr(c.h), uintptr(a))
+}
+
+func (c *conOps) Cursor() (int, int) {
+	bi := c.info()
+	return int(bi.CursorPosition.X - bi.Window.Left), int(bi.CursorPosition.Y - bi.Window.Top)
+}
+
+func (c *conOps) SetCursor(x, y int) {
+	bi := c.info()
+	_ = windows.SetConsoleCursorPosition(c.h, windows.Coord{X: bi.Window.Left + int16(x), Y: bi.Window.Top + int16(y)})
+}
+
+func (c *conOps) Size() (int, int) {
+	bi := c.info()
+	return int(bi.Window.Right-bi.Window.Left) + 1, int(bi.Window.Bottom-bi.Window.Top) + 1
+}
+
+func (c *conOps) Fill(x, y, n int) {
+	if n <= 0 {
+		return
+	}
+	bi := c.info()
+	at := coordArg(int(bi.Window.Left)+x, int(bi.Window.Top)+y)
+	var done uint32
+	procFillConsoleOutputCharacterW.Call(uintptr(c.h), ' ', uintptr(n), at, uintptr(unsafe.Pointer(&done)))
+	procFillConsoleOutputAttribute.Call(uintptr(c.h), uintptr(c.attr), uintptr(n), at, uintptr(unsafe.Pointer(&done)))
 }
 
 func (c *consoleStream) Close() error {

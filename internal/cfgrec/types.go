@@ -247,6 +247,15 @@ type Config struct {
 	MorePrompt     byte
 	NormFore       byte
 	NormBack       byte
+	// Local screen colours: sysop windows (user editor, chat, password box).
+	HiFore, WindFore, WindBack byte
+	BorderFore, BorderBack     byte
+	FKeys                      [10]string
+	FreezeChat                 bool   // stop the user's clock while chatting
+	ChatCommand                string // external chat program instead of the built-in chat
+	AutoChatCapture            bool   // log sysop chats to CHAT<node>.LOG
+	LimitLocal                 bool   // node-window sysop keys disabled
+	SavePasswords              bool
 	LogonPrompt    string
 	Location       string
 	FileBase       string

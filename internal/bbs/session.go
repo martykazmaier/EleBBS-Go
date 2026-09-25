@@ -20,13 +20,15 @@ import (
 	"elebbs/internal/online"
 	"elebbs/internal/pascal"
 	"elebbs/internal/quest"
+	"elebbs/internal/sysop"
 	"elebbs/internal/term"
 )
 
 type Session struct {
-	G    *cfgrec.GlobalCfg
-	Line *cfgrec.LineCfg
-	Opt  cmdline.Options
+	G     *cfgrec.GlobalCfg
+	Line  *cfgrec.LineCfg
+	Opt   cmdline.Options
+	sysop *sysop.Node // node-window sysop keys for a remote caller
 }
 
 func New(g *cfgrec.GlobalCfg, opt cmdline.Options) *Session {
@@ -82,8 +84,24 @@ func (s *Session) Run() error {
 	if err != nil {
 		return err
 	}
+	st = s.monitor(st)
 	defer st.Close()
 	return s.RunOn(st)
+}
+
+// monitor is Pascal snooping: a remote caller's session is echoed to this
+// node's console window while Line.Snooping is set (-S starts with it off).
+func (s *Session) monitor(st comm.Stream) comm.Stream {
+	if st.Local() {
+		return st
+	}
+	door.AttachSessionConsole(s.Line)
+	st = comm.Mirror(st, comm.ConsoleScreen(), func() bool { return s.Line.Snooping })
+	s.sysop = &sysop.Node{G: s.G, Line: s.Line, Win: comm.OpenLocalWindow(), Keys: comm.OpenLocalKeys()}
+	if p, ok := st.(interface{ Pause() func() }); ok {
+		s.sysop.Pause = p.Pause
+	}
+	return st
 }
 
 func (s *Session) RunOn(st comm.Stream) error {
@@ -127,6 +145,11 @@ func (s *Session) RunOn(st comm.Stream) error {
 	}
 	t.FilePost = eng.FilePost
 	t.WriteMessage = eng.WriteMessageTo
+	if s.sysop != nil && s.sysop.Keys != nil {
+		s.sysop.T = t
+		t.Local = s.sysop.Keys
+		t.LocalCommand = s.sysop.Command
+	}
 	s.Line.AnsiOn = true
 	online.ClearNodeMsg(s.G, s.Line.RaNodeNr)
 	online.SetRaBusy(s.G, s.Line.RaNodeNr, true)
@@ -142,7 +165,7 @@ func (s *Session) RunOn(st comm.Stream) error {
 	localScreen(s, fmt.Sprintf("%sIncoming session node %d (%s)", cfgrec.SystemMsgPrefix, s.Line.RaNodeNr, mode(s)))
 	logx.Write(s.G, s.Line.RaNodeNr, '+', "Node started")
 	if !logon.Perform(t, s.G, s.Line) {
-		if !t.IdleHung() {
+		if !t.IdleHung() && !t.HungUp() {
 			logx.Write(s.G, s.Line.RaNodeNr, '-', "Logon failed")
 		}
 		return io.EOF
@@ -152,9 +175,11 @@ func (s *Session) RunOn(st comm.Stream) error {
 	if t.IdleHung() {
 		return io.EOF
 	}
-	t.Println("")
-	t.WriteRA("`A14:Goodbye from " + s.G.RaConfig.SystemName + "`A7:\r\n")
-	term.DisplayHotFile(t, s.G.RaConfig.TextPath, "goodbye")
+	if !t.HungUp() {
+		t.Println("")
+		t.WriteRA("`A14:Goodbye from " + s.G.RaConfig.SystemName + "`A7:\r\n")
+		term.DisplayHotFile(t, s.G.RaConfig.TextPath, "goodbye")
+	}
 	logx.Write(s.G, s.Line.RaNodeNr, '-', s.Line.User.Name+" logged off")
 	return nil
 }
