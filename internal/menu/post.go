@@ -203,7 +203,7 @@ func (e *Engine) saveArticle(a cfgrec.MessageArea, from, to, subj string, lines 
 	case cfgrec.MsgNetMail:
 		attr = mailJamLocal | mailJamTypeNet
 	}
-	return mail.AppendMsg(a.JAMBase, mail.Article{
+	num, err := mail.AppendMsg(a.JAMBase, mail.Article{
 		From:    from,
 		To:      to,
 		Subject: subj,
@@ -217,6 +217,15 @@ func (e *Engine) saveArticle(a cfgrec.MessageArea, from, to, subj string, lines 
 			mail.MsgIDKludge(e.G, a, 0),
 		},
 	})
+	if err == nil && e.Line != nil {
+		switch a.Typ {
+		case cfgrec.MsgNetMail:
+			e.Line.NetMailEntered = true
+		case cfgrec.MsgEchoMail:
+			e.Line.EchoMailEntered = true
+		}
+	}
+	return num, err
 }
 
 func (e *Engine) msgArea(nr int) (cfgrec.MessageArea, bool) {

@@ -45,6 +45,32 @@ func TestFilePostWatchDog(t *testing.T) {
 	}
 }
 
+func TestPostingSetsMailEnteredFlags(t *testing.T) {
+	dir := t.TempDir()
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	for _, tc := range []struct {
+		typ       byte
+		net, echo bool
+	}{
+		{cfgrec.MsgLocal, false, false},
+		{cfgrec.MsgNetMail, true, false},
+		{cfgrec.MsgEchoMail, false, true},
+	} {
+		a := jamArea(t, dir, "area"+string(rune('0'+tc.typ)))
+		a.Typ = tc.typ
+		line := &cfgrec.LineCfg{RaNodeNr: 1, User: cfgrec.User{Name: "Joe User", Record: -1}}
+		eng := &Engine{T: term.New(&seqStream{}, g, line), G: g, Line: line}
+		if _, err := eng.saveArticle(a, "Joe User", "Sysop", "Hi", []string{"hello"}, false, false); err != nil {
+			t.Fatal(err)
+		}
+		if line.NetMailEntered != tc.net || line.EchoMailEntered != tc.echo {
+			t.Fatalf("type %d: net=%v echo=%v", tc.typ, line.NetMailEntered, line.EchoMailEntered)
+		}
+	}
+}
+
 func TestChangePasswordStrictKeepsCaseAndRejectsName(t *testing.T) {
 	g := &cfgrec.GlobalCfg{}
 	g.RaConfig.MinPwdLen = 4

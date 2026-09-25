@@ -33,6 +33,7 @@ type Options struct {
 	Mailer          string
 	BatchAtExit     string
 	EventMins       int
+	ExitCode        int // -E<n>: Pascal DefExitCode, the errorlevel after a caller
 	SysPath         string
 }
 
@@ -126,6 +127,8 @@ func Parse(args []string, full bool) Options {
 			o.BatchAtExit = a[len("-FEND"):]
 		case strings.HasPrefix(key, "T"):
 			o.EventMins = atoi(a[2:])
+		case strings.HasPrefix(key, "E"):
+			o.ExitCode = atoi(a[2:]) & 0xFF
 		case strings.HasPrefix(key, "X"):
 			if len(key) < 2 {
 				continue

@@ -20,8 +20,8 @@ func EncodeExitinfo(line *LineCfg) []byte {
 	}
 	w.B = append(w.B, u[:UsersSize]...)
 	w.Pad(EventSize)
-	w.Bool(false) // NetMailEntered
-	w.Bool(false) // EchoMailEntered
+	w.Bool(line.NetMailEntered)
+	w.Bool(line.EchoMailEntered)
 	w.PString(5, line.LoginTime)
 	w.PString(8, line.LoginDate)
 	w.U16(line.TimeLimit)

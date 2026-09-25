@@ -25,6 +25,12 @@ func TestParseLocalNode(t *testing.T) {
 	}
 }
 
+func TestParseDefaultExitCode(t *testing.T) {
+	if o := Parse([]string{"-E10", "-N1"}, true); o.ExitCode != 10 {
+		t.Fatalf("-E10 gave %d", o.ExitCode)
+	}
+}
+
 func TestParseFrontEndSpawn(t *testing.T) {
 	o := Parse([]string{"-XC", "-XT", "-B65529", "-H204", "-N2", "-XI192.168.0.10"}, true)
 	if o.Node != 2 || o.InheritedHandle != 204 || !o.TelnetServ || !o.NoClose {

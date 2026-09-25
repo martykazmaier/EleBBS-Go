@@ -648,6 +648,8 @@ type LineCfg struct {
 	DispMorePrompt   bool
 	TextfileShells   bool
 	TimeFrozen       bool
+	NetMailEntered   bool // Pascal Exitinfo: netmail posted (errorlevel 3)
+	EchoMailEntered  bool // Pascal Exitinfo: echomail posted (errorlevel 4)
 	UserRecord       int
 	TimeLimit        uint16
 	EventDeducted    uint16

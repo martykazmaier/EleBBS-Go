@@ -188,6 +188,27 @@ func (s *Session) RunOn(st comm.Stream) error {
 	return nil
 }
 
+// ExitCode is Pascal ExitProc's errorlevel after a caller: 3 when netmail
+// was entered, 4 for echomail, 5 for both, otherwise -E (default 0). The
+// matching line is written to the node window.
+func (s *Session) ExitCode() int {
+	code := s.Opt.ExitCode
+	msg := ""
+	switch net, echo := s.Line.NetMailEntered, s.Line.EchoMailEntered; {
+	case net && echo:
+		code, msg = 5, "Net and EchoMail entered"
+	case net:
+		code, msg = 3, "NetMail entered"
+	case echo:
+		code, msg = 4, "EchoMail entered"
+	}
+	if msg == "" || code == s.Opt.ExitCode {
+		msg = "Exiting after caller"
+	}
+	fmt.Fprintf(os.Stderr, "%s%s; exit at errorlevel %d\n", cfgrec.SystemMsgPrefix, msg, code)
+	return code
+}
+
 // hangUpGrace is how long an Alt-H hang-up may take to unwind the session
 // before the node exits anyway.
 const hangUpGrace = 5 * time.Second
@@ -210,7 +231,7 @@ func (s *Session) haltAfterHangUp(t *term.IO, st comm.Stream, done <-chan struct
 	online.SetRaBusy(s.G, s.Line.RaNodeNr, false)
 	files.ClearTagList(door.DropDir(s.G, s.Line))
 	_ = st.Close()
-	os.Exit(0)
+	os.Exit(s.ExitCode())
 }
 
 func mode(s *Session) string {

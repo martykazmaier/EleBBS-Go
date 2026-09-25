@@ -36,4 +36,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%s%s\n", cfgrec.SystemMsgPrefix, err.Error())
 		os.Exit(1)
 	}
+	os.Exit(sess.ExitCode())
 }
