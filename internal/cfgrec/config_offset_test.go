@@ -21,6 +21,7 @@ func TestParseConfigLogonAndPaths(t *testing.T) {
 	raw[0] = 0x50
 	raw[1] = 0x02 // VersionID $250
 	var menuOff, msgOff, sysOff, promptOff, nameOff int
+	var killOff, crashAskOff, crashOff int
 	packedConfigOffset(func(add func(int) int) {
 		add(2)  // VersionID
 		add(1)  // ProductID
@@ -77,8 +78,12 @@ func TestParseConfigLogonAndPaths(t *testing.T) {
 		add(6)  // 6 booleans
 		add(3)  // ANSI, Clear, More
 		add(1)  // UploadMsgs
-		add(1)  // KillSent
-		add(2 + 4 + 2 + 4 + 2 + 4) // crash/attach
+		killOff = add(1)
+		crashAskOff = add(2)
+		add(4) // CrashAskFlags
+		crashOff = add(2)
+		add(4)     // CrashFlags
+		add(2 + 4) // FAttachSec/Flags
 		add(8)  // colors
 		add(8)  // exit levels
 		add(1)  // MultiLine
@@ -104,8 +109,14 @@ func TestParseConfigLogonAndPaths(t *testing.T) {
 	put(sysOff, 60, `C:\BBS\`)
 	put(nameOff, 30, "Test Board")
 	put(promptOff, 40, "`A14:What is your name? ")
+	raw[killOff] = 2
+	raw[crashAskOff] = 10
+	raw[crashOff+1] = 1 // 256
 
 	c := ParseConfig(raw)
+	if c.KillSent != 2 || c.CrashAskSec != 10 || c.CrashSec != 256 {
+		t.Fatalf("KillSent %d CrashAskSec %d CrashSec %d", c.KillSent, c.CrashAskSec, c.CrashSec)
+	}
 	if c.MenuPath != `C:\BBS\MENU\` {
 		t.Fatalf("MenuPath %q off=%d", c.MenuPath, c.Off.MenuPath)
 	}

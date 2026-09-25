@@ -1,6 +1,9 @@
 package cfgrec
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 const (
 	VersionMajor = 0
@@ -214,6 +217,69 @@ type Addr struct {
 	Zone, Net, Node, Point uint16
 }
 
+// String is Pascal AddrToString: zone:net/node, plus .point when set.
+func (a Addr) String() string {
+	s := strconv.Itoa(int(a.Zone)) + ":" + strconv.Itoa(int(a.Net)) + "/" + strconv.Itoa(int(a.Node))
+	if a.Point != 0 {
+		s += "." + strconv.Itoa(int(a.Point))
+	}
+	return s
+}
+
+// IsZero reports an empty (0:0/0.0) address.
+func (a Addr) IsZero() bool { return a == Addr{} }
+
+// ParseAddr is Pascal StringToAddr: the parts given in s replace those of
+// def, so "5" is node 5 in def's net and "2/5" is net 2 node 5.
+func ParseAddr(s string, def Addr) Addr {
+	a := def
+	if s == "" {
+		return a
+	}
+	const (
+		nNet = iota
+		nNode
+		nPoint
+	)
+	next := nNode
+	num := ""
+	val := func() uint16 {
+		n, _ := strconv.Atoi(num)
+		num = ""
+		return uint16(n)
+	}
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= '0' && c <= '9':
+			num += string(c)
+		case c == ':':
+			if num != "" {
+				a.Zone = val()
+			}
+			next, a.Point = nNet, 0
+		case c == '/':
+			if num != "" {
+				a.Net = val()
+			}
+			next, a.Point = nNode, 0
+		case c == '.':
+			if num != "" {
+				a.Node, a.Point = val(), 0
+			}
+			next = nPoint
+		}
+	}
+	switch next {
+	case nNet:
+		a.Net, a.Point = val(), 0
+	case nNode:
+		a.Node, a.Point = val(), 0
+	default:
+		a.Point = val()
+	}
+	return a
+}
+
 type Config struct {
 	VersionID      uint16
 	ProductID      byte
@@ -245,6 +311,9 @@ type Config struct {
 	ANSI           byte
 	ClearScreen    byte
 	MorePrompt     byte
+	KillSent       byte   // AskType: 0 Yes, 1 No, 2 Ask
+	CrashAskSec    uint16 // may ask for crash netmail
+	CrashSec       uint16 // netmail is always crash
 	NormFore       byte
 	NormBack       byte
 	// Local screen colours: sysop windows (user editor, chat, password box).

@@ -324,7 +324,7 @@ const (
 	ScanUsers  = 320 // ralScanUsers
 	UseAlias   = 321 // ralUseAlias
 	From1      = 322 // ralFrom1
-	on2        = 323 // ralon2
+	On2        = 323 // ralon2
 	Subject2   = 324 // ralSubject2
 	AskChange  = 325 // ralAskChange
 	SubAb      = 326 // ralSubAb

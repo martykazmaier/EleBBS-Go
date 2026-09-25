@@ -20,6 +20,8 @@ const (
 	jamPrivate    = 0x00000004
 	jamRcvd       = 0x00000008
 	jamSent       = 0x00000010
+	jamKillSent   = 0x00000020
+	jamCrash      = 0x00000100
 	jamFAttach    = 0x00002000
 	jamTypeLocal  = 0x00800000
 	jamTypeEcho   = 0x01000000
@@ -45,6 +47,10 @@ type Article struct {
 	Sent     bool
 	Private  bool
 	FAttach  bool
+	KillSent bool
+	Crash    bool
+	Orig     string // JAM OADDRESS, "zone:net/node[.point]"
+	Dest     string // JAM DADDRESS
 	Attr     uint32
 }
 
@@ -103,6 +109,8 @@ func ReadJAM(base string) ([]Article, error) {
 			Sent:     attr&jamSent != 0,
 			Private:  attr&jamPrivate != 0,
 			FAttach:  attr&jamFAttach != 0,
+			KillSent: attr&jamKillSent != 0,
+			Crash:    attr&jamCrash != 0,
 			Attr:     attr,
 		}
 		if a.Num == 0 {
@@ -454,6 +462,10 @@ func parseJamSubs(buf []byte, a *Article) {
 		s := strings.TrimRight(string(buf[off:off+dlen]), "\x00")
 		off += dlen
 		switch loid {
+		case 0:
+			a.Orig = strings.TrimSpace(s)
+		case 1:
+			a.Dest = strings.TrimSpace(s)
 		case 2:
 			a.From = s
 		case 3:

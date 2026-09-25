@@ -35,7 +35,7 @@ func TestWriteMessageAsksAttachAndSaves(t *testing.T) {
 	}
 	tio := term.New(st, g, line)
 	eng := &Engine{T: tio, G: g, Line: line}
-	if !eng.writeMessage(a, "Bob", "user@example.com", "hello", nil, false) {
+	if !eng.writeMessage(a, "Bob", "user@example.com", "", "hello", nil, false) {
 		t.Fatalf("post failed: %q", st.out.Bytes())
 	}
 	art, ok := mail.ReadMsg(base, 1)
@@ -77,7 +77,7 @@ func TestWriteMessageSkipsAttachWhenAreaDisallows(t *testing.T) {
 	}
 	tio := term.New(st, g, line)
 	eng := &Engine{T: tio, G: g, Line: line}
-	if !eng.writeMessage(a, "Bob", "user@example.com", "hello", nil, false) {
+	if !eng.writeMessage(a, "Bob", "user@example.com", "", "hello", nil, false) {
 		t.Fatalf("post failed: %q", st.out.Bytes())
 	}
 	art, ok := mail.ReadMsg(base, 1)

@@ -283,7 +283,7 @@ func (e *Engine) doReadMail(a cfgrec.MessageArea, start int, forward, individual
 				forward = true
 			}
 		case mailReply:
-			e.writeMessage(a, e.Line.User.Name, art.From, "Re: "+art.Subject, buildQuoteLines(e.G, art.To, art.From, art.Date.Format("01-02-06 15:04"), art.Body), true)
+			e.writeMessage(a, e.Line.User.Name, art.From, art.Orig, "Re: "+art.Subject, buildQuoteLines(e.G, art.To, art.From, art.Date.Format("01-02-06 15:04"), art.Body), true)
 			if e.T != nil {
 				e.T.StopMore = false
 				e.T.ResetLines(1)
@@ -295,7 +295,7 @@ func (e *Engine) doReadMail(a cfgrec.MessageArea, start int, forward, individual
 			}
 			continue
 		case mailEnter:
-			e.writeMessage(a, e.Line.User.Name, "", "", nil, false)
+			e.writeMessage(a, e.Line.User.Name, "", "", "", nil, false)
 			if e.T != nil {
 				e.T.StopMore = false
 				e.T.ResetLines(1)

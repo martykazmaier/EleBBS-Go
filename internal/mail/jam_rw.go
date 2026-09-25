@@ -310,6 +310,8 @@ func articleAt(hdr, txt *os.File, loc int64, fallback int) (Article, bool) {
 		Sent:     attr&jamSent != 0,
 		Private:  attr&jamPrivate != 0,
 		FAttach:  attr&jamFAttach != 0,
+		KillSent: attr&jamKillSent != 0,
+		Crash:    attr&jamCrash != 0,
 		Attr:     attr,
 	}
 	if a.Num == 0 {
@@ -546,6 +548,12 @@ func AppendMsg(base string, a Article) (int, error) {
 	subs = append(subs, jamSub(2, a.From)...)
 	subs = append(subs, jamSub(3, a.To)...)
 	subs = append(subs, jamSub(6, a.Subject)...)
+	if a.Orig != "" {
+		subs = append(subs, jamSub(0, a.Orig)...)
+	}
+	if a.Dest != "" {
+		subs = append(subs, jamSub(1, a.Dest)...)
+	}
 	if a.MsgID != "" {
 		subs = append(subs, jamSub(4, a.MsgID)...)
 	}
@@ -574,6 +582,12 @@ func AppendMsg(base string, a Article) (int, error) {
 	}
 	if a.FAttach {
 		attr |= jamFAttach
+	}
+	if a.KillSent {
+		attr |= jamKillSent
+	}
+	if a.Crash {
+		attr |= jamCrash
 	}
 	binary.LittleEndian.PutUint32(h[52:], attr)
 	binary.LittleEndian.PutUint32(h[60:], uint32(textOfs))
@@ -614,6 +628,14 @@ func stringsCRLF(s string) string {
 	return string(out)
 }
 
+// AreaAka is Pascal GetAddress(MessageInf.AkaAddress).
+func AreaAka(g *cfgrec.GlobalCfg, a cfgrec.MessageArea) cfgrec.Addr {
+	if g != nil && int(a.AkaAddress) < len(g.RaConfig.Address) {
+		return g.RaConfig.Address[a.AkaAddress]
+	}
+	return cfgrec.Addr{}
+}
+
 func OriginLine(g *cfgrec.GlobalCfg, a cfgrec.MessageArea) string {
 	orig := pascal.Trim(a.OriginLine)
 	if orig == "" && g != nil {
@@ -644,9 +666,6 @@ func TearLine() string {
 }
 
 func MsgIDKludge(g *cfgrec.GlobalCfg, a cfgrec.MessageArea, num int) string {
-	ak := cfgrec.Addr{}
-	if g != nil && int(a.AkaAddress) < len(g.RaConfig.Address) {
-		ak = g.RaConfig.Address[a.AkaAddress]
-	}
+	ak := AreaAka(g, a)
 	return fmt.Sprintf("MSGID: %d:%d/%d %08x", ak.Zone, ak.Net, ak.Node, uint32(time.Now().Unix())^uint32(num))
 }

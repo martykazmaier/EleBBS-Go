@@ -179,14 +179,14 @@ func (e *Engine) readMailboxHits(hits []mail.MailHit) {
 				return
 			}
 		case mailReply:
-			e.writeMessage(h.Area, e.Line.User.Name, art.From, "Re: "+art.Subject, buildQuoteLines(e.G, art.To, art.From, art.Date.Format("01-02-06 15:04"), art.Body), true)
+			e.writeMessage(h.Area, e.Line.User.Name, art.From, art.Orig, "Re: "+art.Subject, buildQuoteLines(e.G, art.To, art.From, art.Date.Format("01-02-06 15:04"), art.Body), true)
 			if e.T != nil {
 				e.T.StopMore = false
 				e.T.ResetLines(1)
 			}
 			i++
 		case mailEnter:
-			e.writeMessage(h.Area, e.Line.User.Name, "", "", nil, false)
+			e.writeMessage(h.Area, e.Line.User.Name, "", "", "", nil, false)
 			i++
 		case mailStop:
 			return

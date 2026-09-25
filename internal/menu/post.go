@@ -45,7 +45,7 @@ func (e *Engine) menuPost(data string) {
 	}
 	to := under2Norm(getMenuValue("/T=", data))
 	subj := under2Norm(getMenuValue("/S=", data))
-	okPost := e.writeMessage(a, e.Line.User.Name, to, subj, nil, false)
+	okPost := e.writeMessage(a, e.Line.User.Name, to, "", subj, nil, false)
 	if okPost && strings.Contains(up, "/L") {
 		e.Hang = true
 	}
@@ -60,7 +60,9 @@ func under2Norm(s string) string {
 	return strings.ReplaceAll(s, "_", " ")
 }
 
-func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote []string, reply bool) bool {
+// writeMessage is Pascal WriteMessage. toAddr is the netmail destination
+// (a reply passes the original's origin address).
+func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, toAddr, subj string, quote []string, reply bool) bool {
 	if a.Name == "" || a.AreaNum == 0 {
 		logx.Write(e.G, e.Line.RaNodeNr, '!', "Invalid messageboard specified")
 		return false
@@ -90,12 +92,15 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 	e.T.WriteRA("`A14:" + e.T.RalGet(lang.From1) + "`A3:" + from)
 	e.T.Println("")
 	if a.Typ != cfgrec.MsgNews {
-		to = e.askToWho(a, to)
+		to, toAddr = e.askToWho(a, to, toAddr)
 		if to == "" {
 			return false
 		}
 	} else if to == "" {
 		to = "All"
+	}
+	if a.Typ == cfgrec.MsgNetMail && toAddr == "" {
+		return false
 	}
 	if !reply || subj == "" {
 		subj = e.askSubject(subj)
@@ -107,7 +112,7 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 		e.T.Println("")
 	}
 	if e.T.AskYesNo(lang.AskChange, false) {
-		to, subj = e.changeHeader(a, to, subj)
+		to, toAddr, subj = e.changeHeader(a, to, toAddr, subj)
 		if to == "" || subj == "" {
 			return false
 		}
@@ -120,6 +125,23 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 		}
 	case cfgrec.MsgKindPrivate:
 		priv = true
+	}
+	killSent, crash := false, false
+	if a.Typ == cfgrec.MsgNetMail && e.G != nil {
+		switch e.G.RaConfig.KillSent {
+		case 0: // Yes
+			killSent = true
+		case 2: // Ask
+			killSent = e.T.AskYesNo(lang.AskDelSnt, false)
+		}
+		sec := e.Line.User.Security
+		if e.G.RaConfig.CrashAskSec <= sec {
+			if e.G.RaConfig.CrashSec <= sec {
+				crash = true
+			} else {
+				crash = e.T.AskYesNo(lang.AskCrash, false)
+			}
+		}
 	}
 
 	if e.T != nil {
@@ -169,7 +191,9 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 
 	e.T.WriteRA("`A15:" + e.T.RalGet(lang.Saving))
 	e.T.Println("")
-	num, err := e.saveArticle(a, from, to, subj, lines, priv, fAttach)
+	num, err := e.saveArticle(a, from, to, subj, lines, postFlags{
+		priv: priv, fAttach: fAttach, killSent: killSent, crash: crash, dest: toAddr,
+	})
 	if err != nil {
 		e.T.WriteRA("`A12:" + err.Error())
 		e.T.Println("")
@@ -186,7 +210,13 @@ func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, subj string, quote
 	return true
 }
 
-func (e *Engine) saveArticle(a cfgrec.MessageArea, from, to, subj string, lines []string, priv, fAttach bool) (int, error) {
+// postFlags are the Pascal PostMessage options beyond the header.
+type postFlags struct {
+	priv, fAttach, killSent, crash bool
+	dest                           string // netmail destination address
+}
+
+func (e *Engine) saveArticle(a cfgrec.MessageArea, from, to, subj string, lines []string, f postFlags) (int, error) {
 	body := strings.Join(lines, "\r\n")
 	tear := mail.TearLine()
 	orig := mail.OriginLine(e.G, a)
@@ -203,15 +233,28 @@ func (e *Engine) saveArticle(a cfgrec.MessageArea, from, to, subj string, lines 
 	case cfgrec.MsgNetMail:
 		attr = mailJamLocal | mailJamTypeNet
 	}
+	fromAddr := mail.AreaAka(e.G, a)
+	dest := ""
+	if a.Typ == cfgrec.MsgNetMail {
+		dest = cfgrec.ParseAddr(f.dest, fromAddr).String()
+	}
+	origAddr := ""
+	if !fromAddr.IsZero() {
+		origAddr = fromAddr.String()
+	}
 	num, err := mail.AppendMsg(a.JAMBase, mail.Article{
-		From:    from,
-		To:      to,
-		Subject: subj,
-		Date:    time.Now(),
-		Body:    body,
-		Private: priv,
-		FAttach: fAttach,
-		Attr:    attr,
+		From:     from,
+		To:       to,
+		Subject:  subj,
+		Date:     time.Now(),
+		Body:     body,
+		Private:  f.priv,
+		FAttach:  f.fAttach,
+		KillSent: f.killSent || a.Typ == cfgrec.MsgInternet,
+		Crash:    f.crash,
+		Orig:     origAddr,
+		Dest:     dest,
+		Attr:     attr,
 		Kludges: []string{
 			"PID: " + cfgrec.PidName,
 			mail.MsgIDKludge(e.G, a, 0),
@@ -246,7 +289,7 @@ func (e *Engine) WriteMessageTo(areaNr int, toWho, from string) bool {
 		logx.Write(e.G, e.Line.RaNodeNr, '!', "Invalid messageboard specified")
 		return false
 	}
-	return e.writeMessage(a, from, toWho, "", nil, false)
+	return e.writeMessage(a, from, toWho, "", "", nil, false)
 }
 
 // FilePost is Pascal FilePost: post file (found like OpenRaFile, node
@@ -280,7 +323,7 @@ func (e *Engine) FilePost(areaNr int, from, to, subj, file, addText string) bool
 		logx.Write(e.G, e.Line.RaNodeNr, '!', "FilePost: only JAM areas are supported ("+a.Name+")")
 		return true
 	}
-	num, err := e.saveArticle(a, from, to, subj, lines, true, false)
+	num, err := e.saveArticle(a, from, to, subj, lines, postFlags{priv: true})
 	if err != nil {
 		logx.Write(e.G, e.Line.RaNodeNr, '!', "FilePost: "+err.Error())
 		return true
@@ -305,27 +348,52 @@ const (
 	mailJamTypeNet   = 0x02000000
 )
 
-func (e *Engine) askToWho(a cfgrec.MessageArea, to string) string {
-	if pascal.UpCase(to) == "SYSOP" && a.Typ != cfgrec.MsgNetMail && e.G != nil {
+// askToWho is Pascal AskToWho: the addressee, and for netmail also the
+// destination address. An empty name aborts the message.
+func (e *Engine) askToWho(a cfgrec.MessageArea, to, addr string) (string, string) {
+	netmail := a.Typ == cfgrec.MsgNetMail
+	if !netmail || addr == "0:0/0" {
+		addr = ""
+	}
+	if pascal.UpCase(to) == "SYSOP" && !netmail && e.G != nil {
 		to = e.G.RaConfig.Sysop
 	}
-	if to != "" {
+	if to != "" && (addr != "" || !netmail) {
 		e.T.WriteRA("`A14:" + e.T.RalGet(lang.To1) + "`A03:" + to)
+		if addr != "" {
+			e.T.WriteRA(" " + e.T.RalGet(lang.On2) + " (" + addr + ")")
+		}
 		e.T.Println("")
-		return to
-	}
-	max := 35
-	if a.IsJAM() {
-		max = 65
+		return to, addr
 	}
 	e.T.WriteRA("`A14:" + e.T.RalGet(lang.To1))
-	s, _ := e.T.GetString(max, false, e.G != nil && e.G.ElConfig.CapitalizeUsername && a.Typ != cfgrec.MsgInternet)
-	s = pascal.Trim(s)
+	s := to
+	if s != "" {
+		// A netmail reply to a message without an origin address.
+		e.T.WriteRA("`A03:" + s)
+	} else {
+		max := 35
+		if a.IsJAM() {
+			max = 65
+		}
+		s, _ = e.T.GetString(max, false, e.G != nil && e.G.ElConfig.CapitalizeUsername && a.Typ != cfgrec.MsgInternet)
+		s = pascal.Trim(s)
+	}
 	e.T.Println("")
-	if pascal.UpCase(s) == "SYSOP" && a.Typ != cfgrec.MsgNetMail && e.G != nil {
+	if s == "" {
+		return "", addr
+	}
+	if netmail {
+		addr = e.askAddress(addr, a)
+		if addr == "" {
+			return "", ""
+		}
+		e.T.Println("")
+	}
+	if pascal.UpCase(s) == "SYSOP" && !netmail && e.G != nil {
 		s = e.G.RaConfig.Sysop
 	}
-	return s
+	return s, addr
 }
 
 func (e *Engine) askSubject(subj string) string {
@@ -340,24 +408,24 @@ func (e *Engine) askSubject(subj string) string {
 	return pascal.Trim(s)
 }
 
-func (e *Engine) changeHeader(a cfgrec.MessageArea, to, subj string) (string, string) {
+func (e *Engine) changeHeader(a cfgrec.MessageArea, to, addr, subj string) (string, string, string) {
 	e.T.Println("")
 	e.T.WriteRA("`A03:" + e.T.RalGet(lang.ChngWhat))
 	e.T.Println("")
 	e.T.WriteRA(e.T.RalStr(lang.ToName1) + " " + e.T.RalStr(lang.SubAb))
 	ch, err := e.T.GetKey(0)
 	if err != nil {
-		return to, subj
+		return to, addr, subj
 	}
 	ch = pascal.UpCase(string(ch))[0]
 	e.T.Println("")
 	if ch == e.ralKey(lang.ToName1, 'T') {
-		to = e.askToWho(a, "")
+		to, addr = e.askToWho(a, "", "")
 	}
 	if ch == e.ralKey(lang.SubAb, 'S') {
 		subj = e.askSubject("")
 	}
-	return to, subj
+	return to, addr, subj
 }
 
 func areaTypeName(e *Engine, a cfgrec.MessageArea) string {
