@@ -11,8 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"elebbs/internal/bbs"
@@ -21,7 +19,6 @@ import (
 	"elebbs/internal/comm"
 	"elebbs/internal/config"
 	"elebbs/internal/logx"
-	"elebbs/internal/online"
 	"elebbs/internal/telsrv"
 	"elebbs/internal/userbase"
 	"golang.org/x/crypto/ssh"
@@ -62,44 +59,18 @@ func Listen(cfg Config) error {
 	fmt.Fprintf(os.Stderr, "%sSSH listening on :%d (USERS.BBS logins, starts EleBBS)\n", cfgrec.SystemMsgPrefix, cfg.Port)
 
 	tn := config.LoadTelnet(cfg.G)
-	max := int(tn.MaxSessions)
-	if max <= 0 {
-		max = 10
-	}
-	startNode := int(tn.StartNodeWith)
-	if startNode < 1 {
-		startNode = 1
-	}
-	var alive int32
-	var mu sync.Mutex
-	inUse := map[int]bool{}
-
 	for {
 		c, err := ln.Accept()
 		if err != nil {
 			return err
 		}
-		if int(atomic.LoadInt32(&alive)) >= max {
-			_ = c.Close()
-			continue
-		}
-		mu.Lock()
-		node := online.FirstFree(startNode, max, inUse)
+		node := telsrv.AcquireNode(tn)
 		if node == 0 {
-			mu.Unlock()
 			_ = c.Close()
 			continue
 		}
-		inUse[node] = true
-		mu.Unlock()
-		atomic.AddInt32(&alive, 1)
 		go func(conn net.Conn, node int) {
-			defer atomic.AddInt32(&alive, -1)
-			defer func() {
-				mu.Lock()
-				delete(inUse, node)
-				mu.Unlock()
-			}()
+			defer telsrv.ReleaseNode(node)
 			serve(cfg, conn, sc, node)
 		}(c, node)
 	}

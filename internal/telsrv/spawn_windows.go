@@ -18,7 +18,7 @@ import (
 func spawnEleBBS(g *cfgrec.GlobalCfg, tn cfgrec.TelnetCfg, exe string, conn net.Conn, node int, ip string) error {
 	tcp, ok := conn.(*net.TCPConn)
 	if !ok {
-		return fmt.Errorf("not a TCP connection")
+		return spawnRelayed(g, tn, exe, conn, node, ip)
 	}
 	f, err := tcp.File()
 	if err != nil {
@@ -32,6 +32,20 @@ func spawnEleBBS(g *cfgrec.GlobalCfg, tn cfgrec.TelnetCfg, exe string, conn net.
 	comm.SkipIOCP(uintptr(src))
 	_ = windows.SetHandleInformation(src, windows.HANDLE_FLAG_INHERIT, 0)
 	return SpawnEleBBSHandle(g, tn, exe, uintptr(src), node, ip, nil)
+}
+
+// spawnRelayed gives EleBBS a loopback socket and relays it to conn, for
+// connections EleBBS cannot use directly (TLS, WebSocket).
+func spawnRelayed(g *cfgrec.GlobalCfg, tn cfgrec.TelnetCfg, exe string, conn net.Conn, node int, ip string) error {
+	bbsSt, peer, h, hf, err := comm.LocalSocketPair()
+	if err != nil {
+		return fmt.Errorf("socket pair: %w", err)
+	}
+	defer hf.Close()
+	defer bbsSt.Close()
+	defer peer.Close()
+	go comm.Relay(peer, conn)
+	return SpawnEleBBSHandle(g, tn, exe, h, node, ip, nil)
 }
 
 // SpawnEleBBSHandle is Pascal TelSrv NewExec: CREATE_NEW_CONSOLE EleBBS, inherit socket, wait.

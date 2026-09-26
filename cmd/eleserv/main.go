@@ -19,7 +19,7 @@ import (
 
 func main() {
 	opt := serv.Parse(os.Args[1:])
-	if opt.ShowHelp || (!opt.FTP && !opt.News && !opt.Telnet && !opt.SSH) {
+	if opt.ShowHelp || (!opt.FTP && !opt.News && !opt.Telnet && !opt.TelnetS && !opt.WSS && !opt.SSH) {
 		fmt.Print(serv.HelpText(cfgrec.PidName))
 		os.Exit(255)
 	}
@@ -36,7 +36,7 @@ func main() {
 	}
 
 	var tlsCfg *tls.Config
-	if opt.FTP || opt.News {
+	if opt.FTP || opt.News || opt.TelnetS || opt.WSS {
 		var src string
 		tlsCfg, src, err = serv.LoadTLS(opt.CertFile, opt.KeyFile, g.RaConfig.SysPath)
 		if err != nil {
@@ -75,6 +75,18 @@ func main() {
 	if opt.Telnet {
 		start("TELNET", func() error {
 			return telsrv.ListenAndSpawn(g)
+		})
+	}
+	if opt.TelnetS {
+		cfg := tlsCfg
+		start("TELNETS", func() error {
+			return telsrv.ListenTLS(g, opt.TelnetSPort, cfg)
+		})
+	}
+	if opt.WSS {
+		cfg := tlsCfg
+		start("WSS", func() error {
+			return telsrv.ListenWSS(g, opt.WSSPort, cfg)
 		})
 	}
 	if opt.SSH {

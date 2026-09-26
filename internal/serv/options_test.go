@@ -39,6 +39,17 @@ func TestParseTelnetXT(t *testing.T) {
 	}
 }
 
+func TestParseTelnetSAndWSS(t *testing.T) {
+	o := Parse([]string{"-TELNETS", "-WSS"})
+	if !o.TelnetS || !o.WSS || o.Telnet || o.TelnetSPort != 992 || o.WSSPort != 11235 {
+		t.Fatalf("%+v", o)
+	}
+	o = Parse([]string{"-WSSPORT:8443", "-TELNETSPORT:2323"})
+	if !o.WSS || o.WSSPort != 8443 || !o.TelnetS || o.TelnetSPort != 2323 {
+		t.Fatalf("%+v", o)
+	}
+}
+
 func TestParseSSH(t *testing.T) {
 	o := Parse([]string{"-SSH", "-SSHPORT:2222"})
 	if !o.SSH {

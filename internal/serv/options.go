@@ -13,6 +13,10 @@ type Options struct {
 	FTP         bool
 	News        bool
 	Telnet      bool
+	TelnetS     bool
+	TelnetSPort int
+	WSS         bool
+	WSSPort     int
 	SSH         bool
 	SSHPort     int
 	Ident       bool
@@ -34,7 +38,7 @@ type Options struct {
 }
 
 func Parse(args []string) Options {
-	o := Options{FTPPort: 990, NewsPort: 563, FTPLimit: 10, FTPNode: 256, PasvLo: 1025, PasvHi: 65535, SSHPort: 22}
+	o := Options{FTPPort: 990, NewsPort: 563, FTPLimit: 10, FTPNode: 256, PasvLo: 1025, PasvHi: 65535, SSHPort: 22, TelnetSPort: 992, WSSPort: 11235}
 	for _, a := range args {
 		if a == "" {
 			continue
@@ -52,6 +56,16 @@ func Parse(args []string) Options {
 			o.News = true
 		case key == "TELNET" || key == "XT":
 			o.Telnet = true
+		case key == "TELNETS":
+			o.TelnetS = true
+		case strings.HasPrefix(key, "TELNETSPORT:"):
+			o.TelnetSPort = atoi(strip(a, "TELNETSPORT:"))
+			o.TelnetS = true
+		case key == "WSS":
+			o.WSS = true
+		case strings.HasPrefix(key, "WSSPORT:"):
+			o.WSSPort = atoi(strip(a, "WSSPORT:"))
+			o.WSS = true
 		case key == "SSH":
 			o.SSH = true
 		case strings.HasPrefix(key, "SSHPORT:"):
@@ -119,11 +133,17 @@ func HelpText(pid string) string {
 		"-NNTPS             - Enable NNTPS (implicit TLS, default port 563)\n" +
 		"-TELNET            - Enable telnet server (spawns ELEBBS.EXE -XT -H...)\n" +
 		"-XT                - Same as -TELNET (connection is telnet, not in-process BBS)\n" +
+		"-TELNETS           - Enable telnets (telnet over TLS, default port 992)\n" +
+		"-TELNETSPORT:<x>   - Telnets listen port (default 992)\n" +
+		"-WSS               - Enable secure WebSocket server for web terminals\n" +
+		"                     (default port 11235)\n" +
+		"-WSSPORT:<x>       - WSS listen port (default 11235)\n" +
 		"-SSH               - Enable SSH server (USERS.BBS login, starts EleBBS)\n" +
 		"-SSHPORT:<x>       - SSH listen port (default 22)\n" +
 		"-XA                - Enable anonymous FTPS logins\n\n" +
 		"-CERT:<file>       - PEM certificate (or combined cert+key PEM)\n" +
 		"-KEY:<file>        - PEM private key (optional if -CERT is combined)\n" +
+		"                     FTPS, NNTPS, telnets and WSS share the certificate.\n" +
 		"                     If omitted, EleSERV looks for eleserv.pem or\n" +
 		"                     eleserv.crt + eleserv.key in the system path.\n\n" +
 		"-FTPPORT:<x>       - FTPS listen port (default 990)\n" +

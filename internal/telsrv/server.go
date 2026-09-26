@@ -1,6 +1,8 @@
 package telsrv
 
 import (
+	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"os"
@@ -8,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
+	"time"
 
 	"elebbs/internal/bbs"
 	"elebbs/internal/cfgrec"
@@ -19,6 +21,10 @@ import (
 )
 
 const connectBanner = "CONNECT 115200/TELNET\n\r\n\r"
+
+// handshakeTimeout bounds the TLS handshake and WebSocket upgrade, so an idle
+// connection cannot hold a goroutine open.
+const handshakeTimeout = 20 * time.Second
 
 func EleBBSPath(g *cfgrec.GlobalCfg, tn cfgrec.TelnetCfg) string {
 	return elebbsExe(g, tn)
@@ -55,12 +61,83 @@ func nodeDir(tn cfgrec.TelnetCfg, node int) string {
 	return strings.TrimRight(p, `\/`)
 }
 
+// Telnet, telnets, WSS and SSH share TELNET.ELE's node range, so they draw
+// from one pool.
+var pool = struct {
+	sync.Mutex
+	inUse map[int]bool
+}{inUse: map[int]bool{}}
+
+// AcquireNode returns the first free node of TELNET.ELE's range, or 0.
+func AcquireNode(tn cfgrec.TelnetCfg) int {
+	max := int(tn.MaxSessions)
+	if max <= 0 {
+		max = 10
+	}
+	pool.Lock()
+	defer pool.Unlock()
+	node := online.FirstFree(int(tn.StartNodeWith), max, pool.inUse)
+	if node != 0 {
+		pool.inUse[node] = true
+	}
+	return node
+}
+
+func ReleaseNode(node int) {
+	pool.Lock()
+	delete(pool.inUse, node)
+	pool.Unlock()
+}
+
+// ListenAndSpawn is the plain telnet server on TELNET.ELE's port.
 func ListenAndSpawn(g *cfgrec.GlobalCfg) error {
 	tn := config.LoadTelnet(g)
 	port := int(tn.ServerPort)
 	if port <= 0 {
 		port = 23
 	}
+	return listen(g, tn, "TELNET", "TELSRV", port, func(c net.Conn) (net.Conn, error) { return c, nil })
+}
+
+// ListenTLS is the telnets server: telnet over implicit TLS.
+func ListenTLS(g *cfgrec.GlobalCfg, port int, cfg *tls.Config) error {
+	if port <= 0 {
+		port = 992
+	}
+	return listen(g, config.LoadTelnet(g), "TELNETS", "TELNETS", port, func(c net.Conn) (net.Conn, error) {
+		return tlsHandshake(c, cfg)
+	})
+}
+
+// ListenWSS is the secure WebSocket server for web terminals (fTelnet and
+// the like): telnet carried in WebSocket messages over TLS.
+func ListenWSS(g *cfgrec.GlobalCfg, port int, cfg *tls.Config) error {
+	if port <= 0 {
+		port = 11235
+	}
+	return listen(g, config.LoadTelnet(g), "WSS", "WSS", port, func(c net.Conn) (net.Conn, error) {
+		tc, err := tlsHandshake(c, cfg)
+		if err != nil {
+			return nil, err
+		}
+		_ = tc.SetDeadline(time.Now().Add(handshakeTimeout))
+		ws, err := upgradeWebSocket(tc)
+		_ = tc.SetDeadline(time.Time{})
+		return ws, err
+	})
+}
+
+func tlsHandshake(c net.Conn, cfg *tls.Config) (net.Conn, error) {
+	tc := tls.Server(c, cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
+	defer cancel()
+	if err := tc.HandshakeContext(ctx); err != nil {
+		return nil, fmt.Errorf("TLS handshake: %w", err)
+	}
+	return tc, nil
+}
+
+func listen(g *cfgrec.GlobalCfg, tn cfgrec.TelnetCfg, name, tag string, port int, prepare func(net.Conn) (net.Conn, error)) error {
 	exe := elebbsExe(g, tn)
 	if !fileExists(exe) {
 		return fmt.Errorf("ELEBBS.EXE not found (TELNET.ELE ProgramPath / exe dir): %s", exe)
@@ -70,53 +147,35 @@ func ListenAndSpawn(g *cfgrec.GlobalCfg) error {
 		return err
 	}
 	defer ln.Close()
-	fmt.Fprintf(os.Stderr, "%sTELNET spawning %s on :%d\n", cfgrec.SystemMsgPrefix, exe, port)
-	var alive int32
-	var mu sync.Mutex
-	inUse := map[int]bool{}
-	max := int(tn.MaxSessions)
-	if max <= 0 {
-		max = 10
-	}
+	fmt.Fprintf(os.Stderr, "%s%s spawning %s on :%d\n", cfgrec.SystemMsgPrefix, name, exe, port)
 	for {
 		c, err := ln.Accept()
 		if err != nil {
 			return err
 		}
-		if int(atomic.LoadInt32(&alive)) >= max {
-			_, _ = c.Write([]byte("BUSY\r\n"))
-			_ = c.Close()
-			continue
-		}
-		mu.Lock()
-		node := online.FirstFree(int(tn.StartNodeWith), max, inUse)
-		if node == 0 {
-			mu.Unlock()
-			_, _ = c.Write([]byte("BUSY\r\n"))
-			_ = c.Close()
-			continue
-		}
-		inUse[node] = true
-		mu.Unlock()
-		atomic.AddInt32(&alive, 1)
-		go func(conn net.Conn, node int) {
-			defer atomic.AddInt32(&alive, -1)
-			defer func() {
-				mu.Lock()
-				delete(inUse, node)
-				mu.Unlock()
-			}()
-			ip := host(conn)
-			logx.Write(g, 0, '>', fmt.Sprintf("[TELSRV] [%s] Connection opened node %d", ip, node))
-			_, _ = conn.Write([]byte(connectBanner))
-			err := spawnEleBBS(g, tn, exe, conn, node, ip)
+		go func(raw net.Conn) {
+			ip := host(raw)
+			conn, err := prepare(raw)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "%sTELNET spawn: %s\n", cfgrec.SystemMsgPrefix, err.Error())
-				logx.Write(g, 0, '!', "[TELSRV] spawn failed: "+err.Error())
+				_ = raw.Close()
+				logx.Write(g, 0, '!', fmt.Sprintf("[%s] [%s] %s", tag, ip, err.Error()))
+				return
 			}
-			_ = conn.Close()
-			logx.Write(g, 0, '>', fmt.Sprintf("[TELSRV] [%s] Connection closed", ip))
-		}(c, node)
+			defer conn.Close()
+			node := AcquireNode(tn)
+			if node == 0 {
+				_, _ = conn.Write([]byte("BUSY\r\n"))
+				return
+			}
+			defer ReleaseNode(node)
+			logx.Write(g, 0, '>', fmt.Sprintf("[%s] [%s] Connection opened node %d", tag, ip, node))
+			_, _ = conn.Write([]byte(connectBanner))
+			if err := spawnEleBBS(g, tn, exe, conn, node, ip); err != nil {
+				fmt.Fprintf(os.Stderr, "%s%s spawn: %s\n", cfgrec.SystemMsgPrefix, name, err.Error())
+				logx.Write(g, 0, '!', fmt.Sprintf("[%s] spawn failed: %s", tag, err.Error()))
+			}
+			logx.Write(g, 0, '>', fmt.Sprintf("[%s] [%s] Connection closed", tag, ip))
+		}(c)
 	}
 }
 
