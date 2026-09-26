@@ -2,11 +2,11 @@
 
 This repository builds three Windows programs:
 
-| Program       | Source          | Purpose                                              |
-|---------------|-----------------|------------------------------------------------------|
-| `elebbs.exe`  | `cmd/elebbs`    | The BBS node (one caller per node).                  |
-| `eleserv.exe` | `cmd/eleserv`   | Telnet, SSH, FTP and NNTP server that spawns nodes.  |
-| `elemail.exe` | `cmd/elemail`   | POP3/SMTP mail retrieval, tossing and sending.       |
+| Program       | Source          | Purpose                                               |
+|---------------|-----------------|-------------------------------------------------------|
+| `elebbs.exe`  | `cmd/elebbs`    | The BBS node (one caller per node).                   |
+| `eleserv.exe` | `cmd/eleserv`   | FTPS, NNTPS, SSH and telnet server that spawns nodes. |
+| `elemail.exe` | `cmd/elemail`   | POP3S/SMTPS mail retrieval, tossing and sending.      |
 
 ## Requirements
 
