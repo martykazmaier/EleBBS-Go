@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -630,10 +631,36 @@ func stringsCRLF(s string) string {
 
 // AreaAka is Pascal GetAddress(MessageInf.AkaAddress).
 func AreaAka(g *cfgrec.GlobalCfg, a cfgrec.MessageArea) cfgrec.Addr {
-	if g != nil && int(a.AkaAddress) < len(g.RaConfig.Address) {
-		return g.RaConfig.Address[a.AkaAddress]
+	return GetAddress(g, a.AkaAddress)
+}
+
+// GetAddress is Pascal GetAddress: AKAs 0-9 are in CONFIG.RA, the
+// others are records of akas.bbs in the system directory.
+func GetAddress(g *cfgrec.GlobalCfg, nr byte) cfgrec.Addr {
+	if g == nil {
+		return cfgrec.Addr{}
 	}
-	return cfgrec.Addr{}
+	if int(nr) < len(g.RaConfig.Address) {
+		return g.RaConfig.Address[nr]
+	}
+	name := filepath.Join(g.RaConfig.SysPath, "akas.bbs")
+	f, err := os.Open(name)
+	if err != nil {
+		if f, err = os.Open(filepath.Join(g.RaConfig.SysPath, "AKAS.BBS")); err != nil {
+			return cfgrec.Addr{}
+		}
+	}
+	defer f.Close()
+	var rec [8]byte
+	if _, err := f.ReadAt(rec[:], int64(int(nr)-len(g.RaConfig.Address))*8); err != nil {
+		return cfgrec.Addr{}
+	}
+	return cfgrec.Addr{
+		Zone:  binary.LittleEndian.Uint16(rec[0:]),
+		Net:   binary.LittleEndian.Uint16(rec[2:]),
+		Node:  binary.LittleEndian.Uint16(rec[4:]),
+		Point: binary.LittleEndian.Uint16(rec[6:]),
+	}
 }
 
 func OriginLine(g *cfgrec.GlobalCfg, a cfgrec.MessageArea) string {
@@ -642,8 +669,8 @@ func OriginLine(g *cfgrec.GlobalCfg, a cfgrec.MessageArea) string {
 		orig = pascal.Trim(g.RaConfig.SystemName)
 	}
 	addr := ""
-	if g != nil && int(a.AkaAddress) < len(g.RaConfig.Address) {
-		ak := g.RaConfig.Address[a.AkaAddress]
+	if g != nil {
+		ak := AreaAka(g, a)
 		if ak.Zone != 0 || ak.Net != 0 {
 			if ak.Point != 0 {
 				addr = fmt.Sprintf("%d:%d/%d.%d", ak.Zone, ak.Net, ak.Node, ak.Point)

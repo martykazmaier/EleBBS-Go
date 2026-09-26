@@ -352,10 +352,7 @@ func ScanMsgArea(g *cfgrec.GlobalCfg, areaNum int, outPath, emailHost string) er
 	if first < 1 {
 		first = 1
 	}
-	var orig cfgrec.Addr
-	if int(a.AkaAddress) < len(g.RaConfig.Address) {
-		orig = g.RaConfig.Address[a.AkaAddress]
-	}
+	orig := AreaAka(g, a)
 	for n := first; n <= st.High; n++ {
 		msg, ok := ReadMsg(base, n)
 		if !ok || msg.Sent {

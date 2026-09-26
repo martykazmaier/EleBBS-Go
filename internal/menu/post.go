@@ -63,6 +63,11 @@ func under2Norm(s string) string {
 // writeMessage is Pascal WriteMessage. toAddr is the netmail destination
 // (a reply passes the original's origin address).
 func (e *Engine) writeMessage(a cfgrec.MessageArea, from, to, toAddr, subj string, quote []string, reply bool) bool {
+	if e.G != nil && a.AreaNum != 0 {
+		if cur, ok := mail.FindArea(mail.LoadAll(e.G), a.AreaNum); ok {
+			a = cur
+		}
+	}
 	if a.Name == "" || a.AreaNum == 0 {
 		logx.Write(e.G, e.Line.RaNodeNr, '!', "Invalid messageboard specified")
 		return false

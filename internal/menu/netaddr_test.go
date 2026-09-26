@@ -84,6 +84,37 @@ func TestNetmailPostAsksAddress(t *testing.T) {
 	}
 }
 
+func TestNetmailUsesAreaAkaFromAkasBbs(t *testing.T) {
+	eng, st, a := netmailEngine(t, "nnnHi\r\rS")
+	akas := make([]byte, 16)
+	binary.LittleEndian.PutUint16(akas[8:], 23)
+	binary.LittleEndian.PutUint16(akas[10:], 1)
+	binary.LittleEndian.PutUint16(akas[12:], 104)
+	if err := os.WriteFile(filepath.Join(eng.G.RaConfig.SysPath, "akas.bbs"), akas, 0644); err != nil {
+		t.Fatal(err)
+	}
+	a.AkaAddress = 11 // second akas.bbs record
+	if !eng.writeMessage(a, "Bob", "Areafix", "23:1/1", "pw", nil, true) {
+		t.Fatalf("post failed: %q", st.out.Bytes())
+	}
+	art, ok := mail.ReadMsg(a.JAMBase, 1)
+	if !ok {
+		t.Fatal("no posted msg")
+	}
+	if art.Orig != "23:1/104" || art.Dest != "23:1/1" {
+		t.Fatalf("orig %q dest %q", art.Orig, art.Dest)
+	}
+	msgid := ""
+	for _, k := range art.Kludges {
+		if strings.HasPrefix(k, "MSGID:") {
+			msgid = k
+		}
+	}
+	if !strings.HasPrefix(msgid, "MSGID: 23:1/104 ") {
+		t.Fatalf("msgid %q", msgid)
+	}
+}
+
 func TestNetmailUnlistedSendAnyway(t *testing.T) {
 	eng, st, a := netmailEngine(t, "Joe\r1:2/9\rynnnHi\r\rS")
 	if !eng.writeMessage(a, "Bob", "", "", "hello", nil, false) {
