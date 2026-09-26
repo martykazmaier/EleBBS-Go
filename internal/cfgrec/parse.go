@@ -62,7 +62,7 @@ func ParseUser(b []byte, rec int) User {
 	u.Attribute3 = r.U8()
 	u.Password = r.PString(15)
 	if u.ScreenLength == 0 {
-		u.ScreenLength = 24
+		u.ScreenLength = 25
 	}
 	if u.ScreenWidth == 0 {
 		u.ScreenWidth = 80

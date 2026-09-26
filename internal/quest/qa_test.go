@@ -770,6 +770,47 @@ func TestScriptStopsAfterHangUp(t *testing.T) {
 	}
 }
 
+func TestAnswersGoToNameAswInSysPath(t *testing.T) {
+	dir := t.TempDir()
+	script := "Assign 1 Joe\r\nOutputAnswer \"Name: \" 1\r\nOutputAnswer 1\r\nOutputAnswer \"a|b \\\"q\\\"\"\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "apply.q-a"), []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	line := &cfgrec.LineCfg{}
+	line.Language.QuesPath = dir
+	Exec(term.New(&keyMem{}, g, line), g, line, "APPLY", ScriptOpts{NoLog: true})
+	got, err := os.ReadFile(filepath.Join(dir, "apply.asw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Name: Joe\r\nJoe\r\na|b \"q\"\r\n"; string(got) != want {
+		t.Fatalf("apply.asw = %q, want %q", got, want)
+	}
+}
+
+func TestGetChoiceKeysThenAnswer(t *testing.T) {
+	dir := t.TempDir()
+	script := "GetChoice YN 1\r\nIf 1 = \"Y\"\r\nDisplay \"TAKEN\"\r\nEndIf\r\nGetChoice Q| 2 NO\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "new.q-a"), []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	line := &cfgrec.LineCfg{}
+	line.Language.QuesPath = dir
+	st := &keyMem{in: []byte("xy\r")}
+	Exec(term.New(st, g, line), g, line, "new", ScriptOpts{NoLog: true})
+	out := st.out.String()
+	if !strings.Contains(out, "Y\r\n") || !strings.Contains(out, "TAKEN") {
+		t.Fatalf("GETCHOICE YN 1 output %q", out)
+	}
+	if strings.Contains(out, "x") {
+		t.Fatalf("key outside the choices was accepted: %q", out)
+	}
+}
+
 func TestGetRawKeyArrowsKeepCR(t *testing.T) {
 	st := &keyMem{in: []byte{27, '[', 'A', '\r'}}
 	g := &cfgrec.GlobalCfg{}

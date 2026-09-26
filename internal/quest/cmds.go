@@ -142,8 +142,11 @@ func (q *vm) cmdExtra(cmd, rest string) {
 	case "DEFINEOUTPUT":
 		q.outFile = q.value(strings.TrimSpace(rest))
 	case "OUTPUTANSWER":
-		n := atoi(strings.TrimSpace(rest))
-		q.post = append(q.post, q.get(n)+"\r\n")
+		s := q.outputAnswerStr(rest)
+		if q.t != nil {
+			s = q.t.ExpandRA(s)
+		}
+		q.post = append(q.post, s+"\r\n")
 	case "COMMIT":
 		q.commit()
 	case "POSTINFO":
@@ -440,17 +443,38 @@ func (q *vm) cmdSubstring(rest string, fromVar bool) {
 	q.put(dst, string(rs[i:end]))
 }
 
+// cmdGetChoice is Pascal GETCHOICE <keys> <answer> [NO]: wait for one of
+// keys ("|" is Enter), echo it (and a new line unless NO), store it.
 func (q *vm) cmdGetChoice(rest string) {
-	dstWord, keys := firstWord(rest)
-	dst := atoi(dstWord)
-	keys = pascal.UpCase(q.value(keys))
-	ch, _ := q.t.GetKey(0)
-	up := pascal.UpCase(string(ch))
-	if up != "" && strings.Contains(keys, up) {
-		q.put(dst, up)
+	f := strings.Fields(rest)
+	if len(f) < 2 {
 		return
 	}
-	q.put(dst, up)
+	dst := atoi(f[1])
+	if dst < 1 || dst > maxAnswers {
+		return
+	}
+	keys := strings.ReplaceAll(pascal.UpCase(f[0]), "|", "\r")
+	var ch byte
+	for {
+		k, err := q.t.GetKey(0)
+		if err != nil || q.t.Gone() {
+			return
+		}
+		ch = pascal.UpCase(string(k))[0]
+		if strings.IndexByte(keys, ch) >= 0 {
+			break
+		}
+	}
+	if len(f) > 2 && pascal.UpCase(f[2]) == "NO" {
+		q.t.Print(string(ch))
+	} else {
+		q.t.Println(string(ch))
+	}
+	if ch == '\r' {
+		ch = '|'
+	}
+	q.put(dst, strings.TrimSpace(string(ch)))
 }
 
 func (q *vm) cmdGetArrow(rest string) {
@@ -578,6 +602,32 @@ func (q *vm) cmdSetUserVar(rest string) {
 		userbase.SetPassword(u, val, q.g != nil && q.g.RaConfig.StrictPwdChecking)
 	}
 	_ = userbase.Write(q.g, *u)
+}
+
+// outputAnswerStr is Pascal MakeDisplayStr as OUTPUTANSWER uses it: the
+// "quoted" text without its backslashes, then the answer numbered by the
+// next word. Pipes and #n stay literal.
+func (q *vm) outputAnswerStr(s string) string {
+	s = strings.TrimSpace(s)
+	var out strings.Builder
+	if strings.HasPrefix(s, `"`) {
+		s = s[1:]
+		i := 0
+		for i < len(s) && (s[i] != '"' || (i > 0 && s[i-1] == '\\')) {
+			i++
+		}
+		out.WriteString(strings.ReplaceAll(s[:i], `\`, ""))
+		if i < len(s) {
+			i++
+		}
+		s = strings.TrimSpace(s[i:])
+	}
+	if w, _ := firstWord(s); w != "" {
+		if n, err := strconv.Atoi(w); err == nil && n >= 1 && n <= maxAnswers {
+			out.WriteString(q.get(n))
+		}
+	}
+	return out.String()
 }
 
 func (q *vm) commit() {

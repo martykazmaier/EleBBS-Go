@@ -176,6 +176,9 @@ func Exec(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, name string, op
 		curY:    1,
 		getInfo: opt.GetInfo,
 	}
+	if g != nil {
+		q.outFile = filepath.Join(g.RaConfig.SysPath, filepath.Base(base)+".asw")
+	}
 	for n, s := range opt.Answers {
 		q.put(n, s)
 	}

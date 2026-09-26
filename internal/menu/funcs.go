@@ -257,7 +257,7 @@ func (e *Engine) doType(typ byte, data string, ns bool) bool {
 		s, _ := e.T.GetString(2, false, false)
 		n := atoiMenu(s)
 		if n < 10 || n > 66 {
-			n = 24
+			n = 25
 		}
 		e.Line.User.ScreenLength = uint16(n)
 		e.T.Length = n

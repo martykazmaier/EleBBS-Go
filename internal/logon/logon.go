@@ -385,7 +385,7 @@ func newUser(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, ral *lang.Fi
 	n := 0
 	fmt.Sscanf(strings.TrimSpace(ls), "%d", &n)
 	if n < 10 || n > 66 {
-		n = 24
+		n = 25
 	}
 	u.ScreenLength = uint16(n)
 	t.Length = n

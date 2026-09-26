@@ -238,7 +238,7 @@ func ParseConfig(b []byte) Config {
 	r.U8()
 	// remaining FutureExpansion ignored
 	if c.PageLength == 0 {
-		c.PageLength = 24
+		c.PageLength = 25
 	}
 	if c.PasswordTries == 0 {
 		c.PasswordTries = 3

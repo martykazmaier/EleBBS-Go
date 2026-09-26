@@ -25,30 +25,24 @@ func Run(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, areas []cfgrec.F
 		defer t.SuspendIdle()()
 	}
 	sock := socketHandle(t, line)
-	dup := uintptr(0)
+	haveSock := sock != 0 && sock != ^uintptr(0)
+	// *W is the same inherited socket door32.sys lists. Pascal passed a
+	// DuplicateHandle copy, which Winsock does not guarantee to be a
+	// usable socket in the door ("invalid socket handle").
 	inheritNum := ""
-	if sock != 0 && sock != ^uintptr(0) {
-		dup = dupInheritable(sock)
-		if dup != 0 && dup != ^uintptr(0) {
-			inheritNum = strconv.FormatUint(uint64(dup), 10)
-		} else {
-			inheritNum = strconv.FormatUint(uint64(sock), 10)
-		}
+	if haveSock {
+		inheritNum = strconv.FormatUint(uint64(sock), 10)
 	}
 	flags := expandStars(t, g, line, areas, raw, inheritNum)
 	if flags.cmd == "" {
-		if dup != 0 && dup != sock {
-			closeSocket(dup)
-		}
 		return
 	}
-	dropSock := sock
 	if showMsg && flags.clearScreen && t != nil {
 		t.ClearScreen()
 		t.WriteRA("`A14:" + t.RalGet(lang.Loading) + "\r\n")
 	}
 	dir := DropDir(g, line)
-	if err := WriteDropFiles(g, line, t, dir, flags, dropSock); err != nil && g != nil {
+	if err := WriteDropFiles(g, line, t, dir, flags, sock); err != nil && g != nil {
 		logx.Write(g, line.RaNodeNr, '!', "drop files: "+err.Error())
 	}
 	if g != nil {
@@ -56,29 +50,13 @@ func Run(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, areas []cfgrec.F
 	}
 	exe, rest := splitPath(flags.cmd)
 	if exe == "" {
-		if dup != 0 && dup != sock {
-			closeSocket(dup)
-		}
 		return
 	}
 	if p := config.ExistingFile(g, exe, dir); p != "" {
 		exe = p
 	}
 	handles := []uintptr{}
-	if flags.inherit {
-		if sock != 0 && sock != ^uintptr(0) {
-			setInherit(sock, false)
-		}
-		if dup != 0 && dup != sock && dup != ^uintptr(0) {
-			setInherit(dup, true)
-			handles = append(handles, dup)
-		}
-	} else if sock != 0 && sock != ^uintptr(0) {
-		if dup != 0 && dup != sock {
-			setInherit(dup, false)
-			closeSocket(dup)
-			dup = 0
-		}
+	if haveSock {
 		setInherit(sock, true)
 		handles = append(handles, sock)
 	}
@@ -94,8 +72,8 @@ func Run(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, areas []cfgrec.F
 	}
 	// Child cwd is the node directory (drop files, DSZ.CTL, DSZLOG filename).
 	err := spawnDoor(spawnExe, spawnRest, dir, handles, flags.inherit && !isBatch(exe), 0)
-	if dup != 0 && dup != sock {
-		closeSocket(dup)
+	if haveSock {
+		setInherit(sock, false)
 	}
 	if !flags.leaveHot {
 		time.Sleep(500 * time.Millisecond)

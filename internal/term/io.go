@@ -180,7 +180,7 @@ func New(s comm.Stream, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg) *IO {
 		length = int(g.RaConfig.PageLength)
 	}
 	if length == 0 {
-		length = 24
+		length = 25
 	}
 	w := int(line.User.ScreenWidth)
 	if w == 0 {

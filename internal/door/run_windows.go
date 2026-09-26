@@ -13,18 +13,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func dupInheritable(h uintptr) uintptr {
-	if h == 0 || h == ^uintptr(0) {
-		return 0
-	}
-	proc := windows.CurrentProcess()
-	var dup windows.Handle
-	if err := windows.DuplicateHandle(proc, windows.Handle(h), proc, &dup, 0, true, windows.DUPLICATE_SAME_ACCESS); err != nil {
-		return 0
-	}
-	return uintptr(dup)
-}
-
 func dupForDoor(h uintptr) uintptr {
 	return comm.DupForDoor(h)
 }
@@ -45,10 +33,6 @@ func closeHandle(h uintptr) {
 		return
 	}
 	_ = windows.CloseHandle(windows.Handle(h))
-}
-
-func closeSocket(h uintptr) {
-	comm.CloseSocket(h)
 }
 
 func windowsCmdLine(exe, rest string) string {

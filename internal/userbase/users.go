@@ -210,7 +210,7 @@ func NewDefaults(g *cfgrec.GlobalCfg) cfgrec.User {
 		FileGroup:    1,
 		MsgGroup:     1,
 		ScreenWidth:  80,
-		ScreenLength: 24,
+		ScreenLength: 25,
 		Security:     g.RaConfig.NewSecurity,
 		Credit:       int32(g.RaConfig.NewCredit),
 		Flags:        g.RaConfig.NewFlags,

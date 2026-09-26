@@ -14,7 +14,7 @@ var defaults = map[int]string{
 	AskAvt:     "Would you like AVATAR codes to be sent",
 	AskHotKey:  "Would you like hot-keyed menus",
 	AskFSview:  "Use the full screen message viewer",
-	AskLines:   "How many lines does your display have (10-66, 24 recommended): ",
+	AskLines:   "How many lines does your display have (10-66, 25 recommended): ",
 	AskPause:   "Would you like to pause after each screen page",
 	AskClr:     "Do you want screen clearing codes to be sent",
 	AskLoc:     "Where are you calling from? ",

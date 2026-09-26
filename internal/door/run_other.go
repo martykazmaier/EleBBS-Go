@@ -8,13 +8,9 @@ import (
 	"strings"
 )
 
-func dupInheritable(h uintptr) uintptr { return 0 }
-
 func dupForDoor(h uintptr) uintptr { return 0 }
 
 func closeHandle(uintptr) {}
-
-func closeSocket(uintptr) {}
 
 func setInherit(uintptr, bool) {}
 
