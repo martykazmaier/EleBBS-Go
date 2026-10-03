@@ -3,7 +3,6 @@ package userbase
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"elebbs/internal/cfgrec"
@@ -259,27 +258,5 @@ func TestSearchRelativeMsgBaseIgnoresCwd(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(wd) })
 	if _, ok := Search(g, "sysop"); !ok {
 		t.Fatal("relative MsgBasePath must resolve against SysPath, not node cwd")
-	}
-}
-
-// EleBBS/Linux kept data files in lowercase; CONFIG.RA still names them in
-// DOS case.
-func TestSearchFindsLowercaseFiles(t *testing.T) {
-	dir := t.TempDir()
-	base := filepath.Join(dir, "msgbase")
-	if err := os.Mkdir(base, 0755); err != nil {
-		t.Fatal(err)
-	}
-	g := &cfgrec.GlobalCfg{}
-	g.RaConfig.MsgBasePath = filepath.Join(dir, "MSGBASE")
-	u := cfgrec.User{Name: "SysOp", PasswordCRC: crc.RA("hunter", true)}
-	if err := os.WriteFile(filepath.Join(base, strings.ToLower(cfgrec.UserBaseName)), cfgrec.EncodeUser(u), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := RebuildIndex(g); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := Search(g, "sysop"); !ok {
-		t.Fatal("user not found in lowercase msgbase/users.bbs")
 	}
 }

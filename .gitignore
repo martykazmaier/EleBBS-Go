@@ -10,7 +10,3 @@
 /cmd/elconfig/
 /cmd/elefile/
 /cmd/elemgr/
-
-# Tests leave DOS separators unmapped on non-Windows hosts, so they create
-# files whose names contain literal backslashes. Never a real path here.
-*\\*
