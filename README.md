@@ -69,6 +69,11 @@ All connection types share the node numbers and session limit set in
 
 See [BUILD.md](BUILD.md).
 
+## License
+
+EleBBS-Go is distributed under the Q Public License 1.0, the license of the
+original EleBBS source. See [LICENSE](LICENSE).
+
 ## Credits
 
 - Original EleBBS: Maarten Bekers. The original Pascal source is at
