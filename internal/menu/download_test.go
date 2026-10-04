@@ -173,6 +173,70 @@ func TestViewTaggedFilesDeleteAndClear(t *testing.T) {
 	}
 }
 
+func TestDownloadedFilesLeaveTagList(t *testing.T) {
+	dir := t.TempDir()
+	filesDir := filepath.Join(dir, "files")
+	if err := os.MkdirAll(filesDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.FileBase = filepath.Join(dir, "filebase")
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	area := cfgrec.FilesArea{AreaNum: 1, Name: "Games", FilePath: filesDir}
+	var ents []files.Entry
+	for _, n := range []string{"GAME.ZIP", "TOOL.ZIP"} {
+		if err := os.WriteFile(filepath.Join(filesDir, n), []byte(n), 0644); err != nil {
+			t.Fatal(err)
+		}
+		ents = append(ents, files.Entry{Hdr: cfgrec.FilesHdr{Name: n, Size: uint32(len(n))}})
+	}
+	if err := files.WriteFDB(g, area, ents); err != nil {
+		t.Fatal(err)
+	}
+	line := &cfgrec.LineCfg{RaNodeNr: 1, User: cfgrec.User{Record: -1, Name: "Test User"}}
+	line.Telnet.NodeDirectories = dir
+	eng := &Engine{T: term.New(&seqStream{}, g, line), G: g, Line: line, Files: []cfgrec.FilesArea{area}}
+	tagBoth := func() []files.Found {
+		eng.saveTagList([]files.TagFile{
+			{Name: "GAME.ZIP", AreaNum: 1, Size: 8},
+			{Name: "TOOL.ZIP", AreaNum: 1, Size: 8},
+		})
+		return eng.taggedFound()
+	}
+	logPath := filepath.Join(dir, "dsz.log")
+	p := cfgrec.Protocol{Name: "Zmodem", LogFileName: logPath, DnLogKeyWord: "Z"}
+
+	tagged := tagBoth()
+	if len(tagged) != 2 {
+		t.Fatalf("tagged %d files", len(tagged))
+	}
+	_ = os.WriteFile(logPath, []byte("Z 1234 bps "+tagged[0].Path+"\r\n"), 0644)
+	if n := eng.finishDownload(p, tagged); n != 1 {
+		t.Fatalf("sent %d, want 1", n)
+	}
+	if left := files.LoadTagList(dir); len(left) != 1 || left[0].Name != "TOOL.ZIP" {
+		t.Fatalf("tag list after one sent: %+v", left)
+	}
+
+	tagged = tagBoth()
+	_ = os.WriteFile(logPath, []byte("E aborted\r\n"), 0644)
+	if n := eng.finishDownload(p, tagged); n != 0 {
+		t.Fatalf("aborted transfer sent %d", n)
+	}
+	if left := files.LoadTagList(dir); len(left) != 2 {
+		t.Fatalf("aborted transfer changed tag list: %+v", left)
+	}
+
+	tagged = tagBoth()
+	if n := eng.finishDownload(cfgrec.Protocol{Name: "Auto"}, tagged); n != 2 {
+		t.Fatalf("no-log transfer sent %d", n)
+	}
+	if left := files.LoadTagList(dir); len(left) != 0 {
+		t.Fatalf("tag list not cleared: %+v", left)
+	}
+}
+
 func TestDownloadUsesTagList(t *testing.T) {
 	dir := t.TempDir()
 	filesDir := filepath.Join(dir, "files")

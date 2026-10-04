@@ -29,6 +29,30 @@ func (e *Engine) taggedFound() []files.Found {
 	return files.FoundFromTags(e.G, e.Files, e.loadTagList())
 }
 
+// untagDownloaded is Pascal DeleteDowned / DeleteFromTagged: sent files leave
+// taglist.ra.
+func (e *Engine) untagDownloaded(sent []files.Found) {
+	if len(sent) == 0 {
+		return
+	}
+	done := map[string]bool{}
+	for _, f := range sent {
+		done[pascal.UpCase(f.Path)] = true
+	}
+	tags := e.loadTagList()
+	keep := make([]files.TagFile, 0, len(tags))
+	for _, t := range tags {
+		f := files.FoundFromTags(e.G, e.Files, []files.TagFile{t})
+		if len(f) == 1 && done[pascal.UpCase(f[0].Path)] {
+			continue
+		}
+		keep = append(keep, t)
+	}
+	if len(keep) != len(tags) {
+		e.saveTagList(keep)
+	}
+}
+
 func tagFromFound(f files.Found) files.TagFile {
 	return files.TagFile{
 		Name:      f.Hdr.Name,

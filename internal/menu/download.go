@@ -306,9 +306,11 @@ func (e *Engine) writeDownloadCtl(p cfgrec.Protocol, tagged []files.Found) strin
 
 func (e *Engine) finishDownload(p cfgrec.Protocol, tagged []files.Found) int {
 	matched := map[string]bool{}
+	haveLog := false
 	if kw := strings.TrimSpace(p.DnLogKeyWord); kw != "" && p.LogFileName != "" {
 		raw, err := os.ReadFile(expandNodeName(p.LogFileName, e.Line.RaNodeNr))
 		if err == nil {
+			haveLog = true
 			upkw := pascal.UpCase(kw)
 			for _, line := range strings.Split(string(raw), "\n") {
 				line = strings.TrimRight(line, "\r")
@@ -324,24 +326,25 @@ func (e *Engine) finishDownload(p cfgrec.Protocol, tagged []files.Found) int {
 			}
 		}
 	}
-	if len(matched) == 0 {
+	if !haveLog {
 		for _, f := range tagged {
 			matched[pascal.UpCase(f.Path)] = true
 		}
 	}
-	sent := 0
+	var sent []files.Found
 	for _, f := range tagged {
 		if !matched[pascal.UpCase(f.Path)] {
 			continue
 		}
-		sent++
+		sent = append(sent, f)
 		files.BumpTimesDL(e.G, f.Area, f.Hdr.RecordNum)
 		e.Line.User.Downloads++
 		e.Line.User.DownloadsK += int32(f.Hdr.Size / 1024)
 		logx.Write(e.G, e.Line.RaNodeNr, '>', "Download ["+p.Name+"]: "+pascal.UpCase(f.Path))
 	}
 	e.saveUser()
-	return sent
+	e.untagDownloaded(sent)
+	return len(sent)
 }
 
 func (e *Engine) localDownload(tagged []files.Found) {
@@ -361,7 +364,7 @@ func (e *Engine) localDownload(tagged []files.Found) {
 		e.T.PressEnter()
 		return
 	}
-	sent := 0
+	var done []files.Found
 	for _, f := range tagged {
 		to := dest + filepath.Base(f.Path)
 		if err := copyDownloadFile(f.Path, to); err != nil {
@@ -369,13 +372,15 @@ func (e *Engine) localDownload(tagged []files.Found) {
 			e.T.Println("")
 			continue
 		}
-		sent++
+		done = append(done, f)
 		files.BumpTimesDL(e.G, f.Area, f.Hdr.RecordNum)
 		e.Line.User.Downloads++
 		e.Line.User.DownloadsK += int32(f.Hdr.Size / 1024)
 		logx.Write(e.G, e.Line.RaNodeNr, '>', "Download [Local]: "+pascal.UpCase(f.Hdr.Name))
 	}
 	e.saveUser()
+	e.untagDownloaded(done)
+	sent := len(done)
 	e.T.Println("")
 	switch sent {
 	case 0:
