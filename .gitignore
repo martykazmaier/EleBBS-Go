@@ -5,6 +5,7 @@
 *.test
 *.out
 *.zip
+/release/
 
 # Untested — keep local, do not publish.
 /cmd/elconfig/
