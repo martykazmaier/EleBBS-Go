@@ -51,6 +51,9 @@ Run any program with `-?` to see its options.
 | `-SSH`, `-SSHPORT:<port>` | SSH (default port 22). Callers log in with their BBS name and password. |
 | `-WSS`, `-WSSPORT:<port>` | Secure WebSocket for web terminals (default port 11235). |
 | `-FTPS`, `-FTPPORT:<port>` | Secure FTP for the file areas (default port 990). |
+| `-PASVPORTS:<low>-<high>` | Port range for FTPS passive data connections (default 1025-65535). Open this range in your firewall. |
+| `-PASVSRVIP:<address>` | Address given to FTPS clients for passive connections, such as your public IP when behind a router. |
+| `-PASVOFFSET:<n>` | Add `n` to the passive port given to clients, for routers that forward to different port numbers. |
 | `-NNTPS`, `-NNTSPORT:<port>` | Secure news for the message areas (default port 563). |
 | `-CERT:<file>`, `-KEY:<file>` | TLS certificate for telnets, WSS, FTPS and NNTPS. Without these, `eleserv.pem` (or `eleserv.crt` + `eleserv.key`) in the system directory is used. |
 
