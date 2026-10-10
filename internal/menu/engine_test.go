@@ -765,3 +765,9 @@ func TestCheckNodeMsgShowsRAFile(t *testing.T) {
 		t.Fatal("NODE.RA should be cleared after display")
 	}
 }
+
+func TestTabIsMenuHotKey(t *testing.T) {
+	if k := hotKeyOf(cfgrec.MenuItem{HotKey: "\t"}); k != "\t" {
+		t.Fatalf("tab hotkey = %q", k)
+	}
+}

@@ -343,11 +343,10 @@ func (e *Engine) run(name string, items []cfgrec.MenuItem, bars []cfgrec.LightBa
 }
 
 func hotKeyOf(it cfgrec.MenuItem) string {
-	k := strings.TrimSpace(it.HotKey)
-	if k == "" {
+	if it.HotKey == "" {
 		return ""
 	}
-	return pascal.UpCase(k[:1])
+	return pascal.UpCase(it.HotKey[:1])
 }
 
 func (e *Engine) displayLightBar(lb cfgrec.LightBar, active bool) {
