@@ -1,0 +1,10 @@
+EleBBS-Go bulletin board system
+Go port of classic EleBBS for BBS operators
+Compatible with RemoteAccess data formats
+Runs the BBS and caller connection services
+Includes file, mail, and message programs
+Reads JAM bases menus users and configs
+Release builds target Windows and Linux
+Unpack beside CONFIG.RA to install
+Use -? for program command-line help
+See README for setup and requirements
