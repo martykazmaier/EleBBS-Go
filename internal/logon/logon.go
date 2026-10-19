@@ -42,7 +42,14 @@ func Perform(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg) bool {
 	}
 	if line.AutoUser != "" {
 		u, ok := userbase.Search(g, line.AutoUser)
-		if !ok || (line.AutoPass != "" && !userbase.CheckPassword(u, line.AutoPass, g.RaConfig.StrictPwdChecking)) {
+		if !ok {
+			if IsTrashcanName(g, line.AutoUser) {
+				t.Println("Login rejected.")
+				return false
+			}
+			return newUser(t, g, line, ral, line.AutoUser)
+		}
+		if line.AutoPass != "" && !userbase.CheckPassword(u, line.AutoPass, g.RaConfig.StrictPwdChecking) {
 			t.Println("Login rejected.")
 			return false
 		}
@@ -331,6 +338,12 @@ func newUser(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, ral *lang.Fi
 	if !ralYesNo(t, g, line, ral, lang.AskNmOk) {
 		return false
 	}
+	if IsTrashcanName(g, name) {
+		term.DisplayHotFile(t, g.RaConfig.TextPath, "TRASHCAN")
+		writeRalLn(t, ral, lang.InvName)
+		logx.Write(g, line.RaNodeNr, '!', "Name entered is unacceptable, trashcan message given")
+		return false
+	}
 	if g.RaConfig.NewSecurity == 0 {
 		term.DisplayHotFile(t, g.RaConfig.TextPath, "PRIVATE")
 		writeRalLn(t, ral, lang.PrivSys)
@@ -520,6 +533,28 @@ func newUser(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, ral *lang.Fi
 	t.MorePrompt = true
 	line.DispMorePrompt = false
 	return finishLogon(t, g, line, nu)
+}
+
+// IsTrashcanName reports whether name appears in trashcan.ctl.
+func IsTrashcanName(g *cfgrec.GlobalCfg, name string) bool {
+	want := pascal.UpCase(pascal.Trim(name))
+	if want == "" {
+		return false
+	}
+	path := config.ExistingFile(g, "trashcan.ctl")
+	if path == "" {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, entry := range strings.Split(string(raw), "\n") {
+		if strings.Contains(pascal.UpCase(pascal.Trim(strings.TrimRight(entry, "\r"))), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func finishLogon(t *term.IO, g *cfgrec.GlobalCfg, line *cfgrec.LineCfg, u cfgrec.User) bool {

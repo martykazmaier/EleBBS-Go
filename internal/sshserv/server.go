@@ -22,6 +22,7 @@ import (
 	"elebbs/internal/cmdline"
 	"elebbs/internal/comm"
 	"elebbs/internal/config"
+	"elebbs/internal/logon"
 	"elebbs/internal/logx"
 	"elebbs/internal/telsrv"
 	"elebbs/internal/userbase"
@@ -46,11 +47,18 @@ func Listen(cfg Config) error {
 		ServerVersion: "SSH-2.0-EleBBS",
 		PasswordCallback: func(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
 			u, ok := userbase.Search(cfg.G, conn.User())
-			if !ok || !userbase.CheckPassword(u, string(pass), cfg.G.RaConfig.StrictPwdChecking) {
+			if ok && !userbase.CheckPassword(u, string(pass), cfg.G.RaConfig.StrictPwdChecking) {
 				return nil, fmt.Errorf("access denied")
 			}
+			if !ok && logon.IsTrashcanName(cfg.G, conn.User()) {
+				return nil, fmt.Errorf("access denied")
+			}
+			name := conn.User()
+			if ok {
+				name = u.Name
+			}
 			return &ssh.Permissions{Extensions: map[string]string{
-				"name": u.Name,
+				"name": name,
 				"pass": string(pass),
 			}}, nil
 		},
@@ -63,7 +71,7 @@ func Listen(cfg Config) error {
 		return err
 	}
 	defer ln.Close()
-	fmt.Fprintf(os.Stderr, "%sSSH listening on :%d (USERS.BBS logins, starts EleBBS)\n", cfgrec.SystemMsgPrefix, cfg.Port)
+	fmt.Fprintf(os.Stderr, "%sSSH listening on :%d (USERS.BBS logins and new-user signup, starts EleBBS)\n", cfgrec.SystemMsgPrefix, cfg.Port)
 	for _, s := range signers {
 		fmt.Fprintf(os.Stderr, "%sSSH host key %s %s\n", cfgrec.SystemMsgPrefix, s.PublicKey().Type(), ssh.FingerprintSHA256(s.PublicKey()))
 	}

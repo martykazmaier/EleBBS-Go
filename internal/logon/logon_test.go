@@ -120,7 +120,7 @@ func TestNewUserLanguagePromptStartsQuestionnaire(t *testing.T) {
 	g.RaConfig.MinPwdLen = 4
 	g.RaConfig.NewUserLang = 1
 	g.RaConfig.LanguagePrompt = "\x0b@LANGSEL"
-	line := &cfgrec.LineCfg{AnsiOn: true, DispMorePrompt: true, RaNodeNr: 1}
+	line := &cfgrec.LineCfg{AnsiOn: true, DispMorePrompt: true, RaNodeNr: 1, AutoUser: "Test User"}
 	line.Language.QuesPath = dir
 	line.Language.TextPath = dir
 	tio := term.New(st, g, line)
@@ -128,8 +128,8 @@ func TestNewUserLanguagePromptStartsQuestionnaire(t *testing.T) {
 	tio.RunScript = func(name, _ string) { got = append(got, name) }
 	ral := lang.Load(g, line.Language)
 	tio.Ral = ral
-	if !newUser(tio, g, line, ral, "Test User") {
-		t.Fatalf("newUser failed, out=%q scripts=%v", st.out.Bytes(), got)
+	if !Perform(tio, g, line) {
+		t.Fatalf("automatic new-user login failed, out=%q scripts=%v", st.out.Bytes(), got)
 	}
 	found := false
 	for _, n := range got {
@@ -142,6 +142,21 @@ func TestNewUserLanguagePromptStartsQuestionnaire(t *testing.T) {
 	}
 	if bytes.Contains(bytes.ToLower(st.out.Bytes()), []byte("more")) || bytes.Contains(bytes.ToLower(st.out.Bytes()), []byte("paused")) {
 		t.Fatalf("pause/more prompt during new user: %q", st.out.Bytes())
+	}
+}
+
+func TestIsTrashcanName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "trashcan.ctl"), []byte("Blocked Name\r\nOther Entry\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	if !IsTrashcanName(g, "blocked name") {
+		t.Fatal("trashcan lookup should be case-insensitive")
+	}
+	if IsTrashcanName(g, "Allowed Name") {
+		t.Fatal("allowed name should not match trashcan")
 	}
 }
 
