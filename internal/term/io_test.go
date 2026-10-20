@@ -987,6 +987,20 @@ func TestStripRalYesNo(t *testing.T) {
 	if s != "Send files with this message" || def {
 		t.Fatalf("no trailer: %q %v", s, def)
 	}
+	s, def = stripRalYesNo("Would you like to create an accountY", false)
+	if s != "Would you like to create an account" || !def {
+		t.Fatalf("Pascal RAL default marker: %q %v", s, def)
+	}
+}
+
+func TestYesNoAskPlacesQuestionMarkAfterChoices(t *testing.T) {
+	st := &keyStream{in: []byte{'N'}}
+	tio := New(st, &cfgrec.GlobalCfg{}, &cfgrec.LineCfg{AnsiOn: true})
+	tio.Print("Continue")
+	tio.yesNoAsk(false)
+	if !bytes.Contains(st.out.Bytes(), []byte("Continue [y/N]? ")) {
+		t.Fatalf("yes/no prompt punctuation: %q", st.out.Bytes())
+	}
 }
 
 func TestAskYesNoUsesYesNoQuest(t *testing.T) {
@@ -1009,5 +1023,20 @@ func TestAskYesNoUsesYesNoQuest(t *testing.T) {
 	}
 	if bytes.Contains(st.out.Bytes(), []byte("[y/N]")) || bytes.Contains(st.out.Bytes(), []byte("[Y/n]")) {
 		t.Fatalf("fallback brackets used: %q", st.out.Bytes())
+	}
+}
+
+func TestAskYesNoKeepsQuestionMarkBeforeQuestChoices(t *testing.T) {
+	st := &keyStream{}
+	tio := New(st, &cfgrec.GlobalCfg{}, &cfgrec.LineCfg{AnsiOn: true})
+	tio.YesNoQuest = func(bool) (bool, bool) {
+		tio.Print(" [Yes] [No]")
+		return true, true
+	}
+	if !tio.AskYesNo(lang.AskLoc, false) {
+		t.Fatal("expected yes from YESNO.Q-A")
+	}
+	if !bytes.Contains(st.out.Bytes(), []byte("Where are you calling from?  [Yes] [No]")) {
+		t.Fatalf("Q-A prompt punctuation changed: %q", st.out.Bytes())
 	}
 }

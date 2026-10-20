@@ -1123,22 +1123,17 @@ func (t *IO) AskYesNo(ralNr int, def bool) bool {
 // stripRalYesNo is Pascal RalStrYesNoAsk: the last Y/N of a yes/no
 // language prompt is the default and is not displayed.
 func stripRalYesNo(s string, def bool) (string, bool) {
-	n := len(s)
-	if n < 2 {
+	if len(s) == 0 {
 		return s, def
 	}
-	last, prev := s[n-1], s[n-2]
-	letter := (prev >= 'A' && prev <= 'Z') || (prev >= 'a' && prev <= 'z')
-	if letter {
+	switch s[len(s)-1] {
+	case 'Y':
+		return s[:len(s)-1], true
+	case 'N':
+		return s[:len(s)-1], false
+	default:
 		return s, def
 	}
-	switch last {
-	case 'Y', 'y':
-		return s[:n-1], true
-	case 'N', 'n':
-		return s[:n-1], false
-	}
-	return s, def
 }
 
 func (t *IO) yesNoAsk(def bool) bool {
@@ -1165,10 +1160,11 @@ func (t *IO) yesNoAsk(def bool) bool {
 	}
 	var br string
 	if def {
-		br = " " + left + string(y) + slash + strings.ToLower(string(n)) + right + "? "
+		br = " " + left + string(y) + slash + strings.ToLower(string(n)) + right
 	} else {
-		br = " " + left + strings.ToLower(string(y)) + slash + string(n) + right + "? "
+		br = " " + left + strings.ToLower(string(y)) + slash + string(n) + right
 	}
+	br += "? "
 	t.Print(br)
 	for {
 		ch, err := t.GetKey(0)
