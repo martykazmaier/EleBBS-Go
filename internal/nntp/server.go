@@ -2,9 +2,12 @@ package nntp
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
+	netmail "net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -116,7 +119,7 @@ func (ss *session) dispatch(cmd, arg string) bool {
 		ss.cmdArticle(cmd, arg)
 	case "NEXT", "LAST":
 		ss.cmdMove(cmd)
-	case "XOVER":
+	case "OVER", "XOVER":
 		ss.cmdXover(arg)
 	case "POST":
 		ss.cmdPost()
@@ -144,7 +147,7 @@ func (ss *session) cmdAuth(arg string) {
 		ss.line("381 More authentication information required")
 	case "PASS":
 		u, ok := userbase.Search(ss.cfg.G, ss.pending)
-		if !ok || !userbase.CheckPassword(u, rest, ss.cfg.G.RaConfig.StrictPwdChecking) {
+		if !ok || !userbase.CheckPassword(u, rest, false) {
 			ss.line("481 Authentication rejected")
 			return
 		}
@@ -202,17 +205,22 @@ func (ss *session) cmdGroup(name string) {
 }
 
 func (ss *session) cmdArticle(kind, arg string) {
-	if ss.cur.Name == "" {
+	arg = strings.TrimSpace(arg)
+	byID := strings.Contains(arg, "@") || strings.HasPrefix(arg, "<")
+	if ss.cur.Name == "" && !byID {
 		ss.line("412 No newsgroup selected")
 		return
 	}
 	var a mail.Article
 	var ok bool
-	arg = strings.TrimSpace(arg)
 	if arg == "" {
 		a, ok = mail.FindArticle(ss.arts, ss.curNum)
-	} else if strings.Contains(arg, "@") || strings.HasPrefix(arg, "<") {
-		a, ok = mail.FindArticleID(ss.arts, arg)
+	} else if byID {
+		group, arts, found, match := ss.findArticleID(arg)
+		if match {
+			ss.cur, ss.arts = group, arts
+			a, ok = found, true
+		}
 	} else {
 		n, _ := strconv.Atoi(arg)
 		a, ok = mail.FindArticle(ss.arts, n)
@@ -241,6 +249,19 @@ func (ss *session) cmdArticle(kind, arg string) {
 		ss.writeBody(a.Body)
 		ss.line(".")
 	}
+}
+
+func (ss *session) findArticleID(id string) (mail.NewsGroup, []mail.Article, mail.Article, bool) {
+	for _, group := range ss.groups {
+		arts := ss.arts
+		if group.Name != ss.cur.Name {
+			arts, _ = mail.ReadJAM(group.Area.JAMBase)
+		}
+		if article, ok := mail.FindArticleID(arts, id); ok {
+			return group, arts, article, true
+		}
+	}
+	return mail.NewsGroup{}, nil, mail.Article{}, false
 }
 
 func (ss *session) writeHead(a mail.Article) {
@@ -335,12 +356,9 @@ func (ss *session) cmdXover(arg string) {
 }
 
 func (ss *session) cmdPost() {
-	if ss.cur.Name != "" && !ss.cur.Posting {
-		ss.line("440 Posting not allowed")
-		return
-	}
 	ss.line("340 Send article to be posted. End with <CR-LF>.<CR-LF>")
 	var buf strings.Builder
+	tooLarge := false
 	for {
 		ln, err := serv.ReadLine(ss.r)
 		if err != nil {
@@ -353,11 +371,81 @@ func (ss *session) cmdPost() {
 		if strings.HasPrefix(ln, "..") {
 			ln = ln[1:]
 		}
-		buf.WriteString(ln)
-		buf.WriteByte('\n')
+		if buf.Len()+len(ln)+1 > mail.MaxMsgBytes {
+			tooLarge = true
+		} else if !tooLarge {
+			buf.WriteString(ln)
+			buf.WriteByte('\n')
+		}
 	}
-	_ = buf.String()
-	ss.line("441 Posting to JAM is not enabled in this build")
+	if tooLarge {
+		ss.line("441 Posting failed")
+		return
+	}
+	msg, err := netmail.ReadMessage(bytes.NewBufferString(buf.String()))
+	if err != nil {
+		ss.line("441 Posting failed")
+		return
+	}
+	groupName := strings.TrimSpace(msg.Header.Get("Newsgroups"))
+	if groupName == "" || strings.Contains(groupName, ",") {
+		ss.line("441 Posting failed")
+		return
+	}
+	group, ok := mail.FindNewsGroup(ss.groups, groupName)
+	if !ok || !group.Posting {
+		ss.line("441 Posting failed")
+		return
+	}
+	from := strings.TrimSpace(msg.Header.Get("From"))
+	subject := strings.TrimSpace(msg.Header.Get("Subject"))
+	if from == "" || subject == "" {
+		ss.line("441 Posting failed")
+		return
+	}
+	body, err := io.ReadAll(msg.Body)
+	if err != nil {
+		ss.line("441 Posting failed")
+		return
+	}
+	msgID := strings.Trim(strings.TrimSpace(msg.Header.Get("Message-ID")), "<>")
+	if msgID == "" {
+		domain := ss.ns.DomainName
+		if domain == "" {
+			domain = "elebbs.bbs"
+		}
+		msgID = fmt.Sprintf("%d@%s", time.Now().UnixNano(), domain)
+	}
+	replyID := ""
+	if refs := strings.Fields(msg.Header.Get("References")); len(refs) > 0 {
+		replyID = strings.Trim(refs[len(refs)-1], "<>")
+	}
+	date := time.Now()
+	if value := strings.TrimSpace(msg.Header.Get("Date")); value != "" {
+		for _, layout := range []string{time.RFC1123Z, time.RFC1123, time.RFC822Z, time.RFC822, time.RFC3339} {
+			if parsed, parseErr := time.Parse(layout, value); parseErr == nil {
+				date = parsed
+				break
+			}
+		}
+	}
+	num, err := mail.AppendMsg(group.Area.JAMBase, mail.Article{
+		From:    from,
+		To:      "All",
+		Subject: subject,
+		Date:    date,
+		MsgID:   msgID,
+		ReplyID: replyID,
+		Body:    strings.ReplaceAll(string(body), "\r\n", "\n"),
+	})
+	if err != nil {
+		ss.line("441 Posting failed")
+		return
+	}
+	ss.cur = group
+	ss.arts, _ = mail.ReadJAM(group.Area.JAMBase)
+	ss.curNum = num
+	ss.line("240 Article received OK: <%s>", msgID)
 }
 
 func (ss *session) line(format string, args ...any) {

@@ -8,9 +8,9 @@ import (
 const (
 	VersionMajor = 0
 	VersionMinor = 10
-	VersionID    = "0.11.b1-go"
+	VersionID    = "0.11.b2-go"
 	FullProgName = "EleBBS/W32"
-	PidName      = "EleBBS/W32 v0.11.b1-go"
+	PidName      = "EleBBS/W32 v0.11.b2-go"
 	PlatformID   = "W32"
 	VersIDWord   = 0x250
 	EleVersID    = 0x010
@@ -281,41 +281,41 @@ func ParseAddr(s string, def Addr) Addr {
 }
 
 type Config struct {
-	VersionID      uint16
-	ProductID      byte
-	MinimumBaud    uint16
-	MenuPath       string
-	TextPath       string
-	AttachPath     string
-	Nodelist       string
-	MsgBasePath    string
-	SysPath        string
-	ExternalEd     string
-	Address        [10]Addr
-	SystemName     string
-	NewSecurity    uint16
-	NewCredit      uint16
-	NewFlags       Flag
-	OriginLine     string
-	QuoteString    string
-	Sysop          string
-	LogFileName    string
-	FastLogon      bool
+	VersionID   uint16
+	ProductID   byte
+	MinimumBaud uint16
+	MenuPath    string
+	TextPath    string
+	AttachPath  string
+	Nodelist    string
+	MsgBasePath string
+	SysPath     string
+	ExternalEd  string
+	Address     [10]Addr
+	SystemName  string
+	NewSecurity uint16
+	NewCredit   uint16
+	NewFlags    Flag
+	OriginLine  string
+	QuoteString string
+	Sysop       string
+	LogFileName string
+	FastLogon   bool
 	// StrictPwdChecking makes logon passwords case-sensitive and rejects
 	// trivial new passwords (pwdtrash.ctl, parts of the user's name).
 	StrictPwdChecking bool
 	PwdBoard          byte // WatchDog area: warn the user of bad password attempts
 	BadPwdArea        byte // area for the "leave a message to the sysop" comment
-	OneWord        bool
-	CheckMail      byte
-	ANSI           byte
-	ClearScreen    byte
-	MorePrompt     byte
-	KillSent       byte   // AskType: 0 Yes, 1 No, 2 Ask
-	CrashAskSec    uint16 // may ask for crash netmail
-	CrashSec       uint16 // netmail is always crash
-	NormFore       byte
-	NormBack       byte
+	OneWord           bool
+	CheckMail         byte
+	ANSI              byte
+	ClearScreen       byte
+	MorePrompt        byte
+	KillSent          byte   // AskType: 0 Yes, 1 No, 2 Ask
+	CrashAskSec       uint16 // may ask for crash netmail
+	CrashSec          uint16 // netmail is always crash
+	NormFore          byte
+	NormBack          byte
 	// Local screen colours: sysop windows (user editor, chat, password box).
 	HiFore, WindFore, WindBack byte
 	BorderFore, BorderBack     byte
@@ -325,34 +325,34 @@ type Config struct {
 	AutoChatCapture            bool   // log sysop chats to CHAT<node>.LOG
 	LimitLocal                 bool   // node-window sysop keys disabled
 	SavePasswords              bool
-	LogonPrompt    string
-	Location       string
-	FileBase       string
-	EchoChar       string
-	HotKeys        byte
-	AVATAR         byte
-	PasswordTries  uint16
-	LogonTime      uint16
-	UserTimeOut    uint16
-	MinPwdLen      byte
-	MultiLine      bool
-	AskHandle      bool
-	AskBirthDate   bool
-	NewUserGroup   byte
-	FileLine       string
-	LangHdr        string
-	LanguagePrompt string
-	NewUserLang    byte
-	EMSIEnable     byte
-	EMSINewUser    bool
-	KeyboardPwd    string
-	CapLocation    bool
-	SemPath        string
-	LeftBracket    byte
-	RightBracket   byte
-	PageLength     uint16
-	Raw            []byte
-	Off            CfgOff
+	LogonPrompt                string
+	Location                   string
+	FileBase                   string
+	EchoChar                   string
+	HotKeys                    byte
+	AVATAR                     byte
+	PasswordTries              uint16
+	LogonTime                  uint16
+	UserTimeOut                uint16
+	MinPwdLen                  byte
+	MultiLine                  bool
+	AskHandle                  bool
+	AskBirthDate               bool
+	NewUserGroup               byte
+	FileLine                   string
+	LangHdr                    string
+	LanguagePrompt             string
+	NewUserLang                byte
+	EMSIEnable                 byte
+	EMSINewUser                bool
+	KeyboardPwd                string
+	CapLocation                bool
+	SemPath                    string
+	LeftBracket                byte
+	RightBracket               byte
+	PageLength                 uint16
+	Raw                        []byte
+	Off                        CfgOff
 }
 
 // CfgOff holds byte offsets into CONFIG.RA for fields ELCONFIG can save.
