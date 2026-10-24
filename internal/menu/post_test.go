@@ -3,12 +3,37 @@ package menu
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"elebbs/internal/cfgrec"
 	"elebbs/internal/mail"
 	"elebbs/internal/term"
 )
+
+func TestSaveArticleOmitsTearLine(t *testing.T) {
+	dir := t.TempDir()
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	a := cfgrec.MessageArea{
+		AreaNum: 1,
+		Name:    "Echo",
+		Typ:     cfgrec.MsgEchoMail,
+		JAMBase: filepath.Join(dir, "echo"),
+	}
+	eng := &Engine{G: g}
+
+	if _, err := eng.saveArticle(a, "Bob", "All", "hello", []string{"body"}, postFlags{}); err != nil {
+		t.Fatal(err)
+	}
+	art, ok := mail.ReadMsg(a.JAMBase, 1)
+	if !ok {
+		t.Fatal("no posted message")
+	}
+	if strings.Contains(art.Body, mail.TearLine()) {
+		t.Fatalf("tear line present in body %q", art.Body)
+	}
+}
 
 func TestWriteMessageAsksAttachAndSaves(t *testing.T) {
 	dir := t.TempDir()

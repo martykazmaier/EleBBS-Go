@@ -223,10 +223,8 @@ type postFlags struct {
 
 func (e *Engine) saveArticle(a cfgrec.MessageArea, from, to, subj string, lines []string, f postFlags) (int, error) {
 	body := strings.Join(lines, "\r\n")
-	tear := mail.TearLine()
 	orig := mail.OriginLine(e.G, a)
 	if a.Typ == cfgrec.MsgEchoMail || a.Typ == cfgrec.MsgLocal {
-		body += "\r\n" + tear + "\r\n"
 		if orig != "" {
 			body += orig + "\r\n"
 		}
@@ -286,8 +284,8 @@ func (e *Engine) msgArea(nr int) (cfgrec.MessageArea, bool) {
 	return mail.FindArea(mail.LoadAll(e.G), uint16(nr))
 }
 
-// WriteMessageTo is Pascal WriteMessage(area, ToWho, FromWho, '', ...) for
-// hooks outside the menu engine (BadPwdArea comment at logon).
+// WriteMessageTo mirrors Pascal WriteMessage for hooks outside the menu engine
+// (BadPwdArea comment at logon).
 func (e *Engine) WriteMessageTo(areaNr int, toWho, from string) bool {
 	a, ok := e.msgArea(areaNr)
 	if !ok {
