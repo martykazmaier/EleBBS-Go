@@ -11,15 +11,16 @@ import (
 	"elebbs/internal/term"
 )
 
-func TestSaveArticleOmitsTearLine(t *testing.T) {
+func TestSaveArticleOmitsTearAndOriginLines(t *testing.T) {
 	dir := t.TempDir()
 	g := &cfgrec.GlobalCfg{}
 	g.RaConfig.SysPath = dir
 	a := cfgrec.MessageArea{
-		AreaNum: 1,
-		Name:    "Echo",
-		Typ:     cfgrec.MsgEchoMail,
-		JAMBase: filepath.Join(dir, "echo"),
+		AreaNum:    1,
+		Name:       "Echo",
+		Typ:        cfgrec.MsgEchoMail,
+		OriginLine: "Configured origin",
+		JAMBase:    filepath.Join(dir, "echo"),
 	}
 	eng := &Engine{G: g}
 
@@ -30,8 +31,8 @@ func TestSaveArticleOmitsTearLine(t *testing.T) {
 	if !ok {
 		t.Fatal("no posted message")
 	}
-	if strings.Contains(art.Body, mail.TearLine()) {
-		t.Fatalf("tear line present in body %q", art.Body)
+	if strings.Contains(art.Body, mail.TearLine()) || strings.Contains(art.Body, " * Origin:") {
+		t.Fatalf("tear or origin line present in body %q", art.Body)
 	}
 }
 

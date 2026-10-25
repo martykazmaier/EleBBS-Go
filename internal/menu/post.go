@@ -223,12 +223,6 @@ type postFlags struct {
 
 func (e *Engine) saveArticle(a cfgrec.MessageArea, from, to, subj string, lines []string, f postFlags) (int, error) {
 	body := strings.Join(lines, "\r\n")
-	orig := mail.OriginLine(e.G, a)
-	if a.Typ == cfgrec.MsgEchoMail || a.Typ == cfgrec.MsgLocal {
-		if orig != "" {
-			body += orig + "\r\n"
-		}
-	}
 	attr := uint32(mailJamLocal | mailJamTypeLocal)
 	switch a.Typ {
 	case cfgrec.MsgEchoMail, cfgrec.MsgNews:
