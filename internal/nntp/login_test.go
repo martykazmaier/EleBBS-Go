@@ -131,16 +131,26 @@ func TestNNTPBodyByMessageIDWithoutSelectedGroup(t *testing.T) {
 }
 
 func TestNNTPPostWritesToJAMAndRejectsReadOnlyGroup(t *testing.T) {
-	for _, posting := range []bool{true, false} {
-		t.Run(map[bool]string{true: "posting enabled", false: "posting disabled"}[posting], func(t *testing.T) {
+	tests := []struct {
+		name         string
+		posting      bool
+		areaType     byte
+		expectedAttr uint32
+	}{
+		{name: "local area", posting: true, areaType: cfgrec.MsgLocal, expectedAttr: 0x00800001},
+		{name: "echomail area", posting: true, areaType: cfgrec.MsgEchoMail, expectedAttr: 0x01000001},
+		{name: "posting disabled"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			base := filepath.Join(t.TempDir(), "news")
 			srv, cli := net.Pipe()
 			defer cli.Close()
 			ss := &session{
 				groups: []mail.NewsGroup{{
 					Name:    "test.group",
-					Area:    cfgrec.MessageArea{JAMBase: base},
-					Posting: posting,
+					Area:    cfgrec.MessageArea{JAMBase: base, Typ: tt.areaType},
+					Posting: tt.posting,
 				}},
 				c: srv,
 				r: bufio.NewReader(srv),
@@ -174,7 +184,7 @@ func TestNNTPPostWritesToJAMAndRejectsReadOnlyGroup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !posting {
+			if !tt.posting {
 				if !strings.HasPrefix(reply, "441 ") {
 					t.Fatalf("read-only POST reply %q", reply)
 				}
@@ -192,6 +202,9 @@ func TestNNTPPostWritesToJAMAndRejectsReadOnlyGroup(t *testing.T) {
 			}
 			if arts[0].From != "sysop@example.test" || arts[0].Subject != "JAM posting test" || arts[0].MsgID != "post-1@example.test" {
 				t.Fatalf("posted headers %+v", arts[0])
+			}
+			if arts[0].Attr != tt.expectedAttr {
+				t.Errorf("posted JAM attributes %#08x, want %#08x", arts[0].Attr, tt.expectedAttr)
 			}
 			if !strings.Contains(arts[0].Body, "Hello from NNTP") || !strings.Contains(arts[0].Body, ".dot-stuffed line") {
 				t.Fatalf("posted body %q", arts[0].Body)

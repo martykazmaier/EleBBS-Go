@@ -436,6 +436,7 @@ func (ss *session) cmdPost() {
 		Date:    date,
 		MsgID:   msgID,
 		ReplyID: replyID,
+		Attr:    mail.LocalPostAttr(group.Area.Typ),
 		Body:    strings.ReplaceAll(string(body), "\r\n", "\n"),
 	})
 	if err != nil {

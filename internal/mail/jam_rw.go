@@ -501,6 +501,17 @@ func jamEnsureJhd(base string, active, baseNum int32) {
 	_, _ = f.WriteAt(buf, 0)
 }
 
+// LocalPostAttr returns the JAM attribute for a locally entered message in the area (echo/net flag).
+func LocalPostAttr(typ byte) uint32 {
+	switch typ {
+	case cfgrec.MsgEchoMail, cfgrec.MsgNews:
+		return jamLocal | jamTypeEcho
+	case cfgrec.MsgNetMail:
+		return jamLocal | jamTypeNet
+	}
+	return jamLocal | jamTypeLocal
+}
+
 // AppendMsg writes a new JAM message. Returns the assigned number.
 func AppendMsg(base string, a Article) (int, error) {
 	idx, err := jamOpenRW(base, ".jdx")
