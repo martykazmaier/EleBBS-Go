@@ -8,9 +8,9 @@ import (
 const (
 	VersionMajor = 0
 	VersionMinor = 10
-	VersionID    = "0.11.b4-go"
+	VersionID    = "0.11.b5-go"
 	FullProgName = "EleBBS/W32"
-	PidName      = "EleBBS/W32 v0.11.b4-go"
+	PidName      = "EleBBS/W32 v0.11.b5-go"
 	PlatformID   = "W32"
 	VersIDWord   = 0x250
 	EleVersID    = 0x010
@@ -449,6 +449,17 @@ func (e EleMessage) Usenet() bool { return e.Attribute&EleMsgUsenet != 0 }
 
 func (e EleMessage) CanPost() bool {
 	return e.AccessSettings == NwsPostAlways || e.AccessSettings == NwsPostSettings || e.AccessSettings == NwsUseBoth
+}
+
+// PostNeedsAuth is Pascal nwsPostUseSettings / nwsUseBoth ("Registered post"
+// and "Registered for read/post"): AUTHINFO is required before POST.
+func (e EleMessage) PostNeedsAuth() bool {
+	return e.AccessSettings == NwsPostSettings || e.AccessSettings == NwsUseBoth
+}
+
+// ReadNeedsAuth is Pascal nwsUseBoth: ARTICLE/GROUP require AUTHINFO.
+func (e EleMessage) ReadNeedsAuth() bool {
+	return e.AccessSettings == NwsUseBoth
 }
 
 type UsersIdx struct {

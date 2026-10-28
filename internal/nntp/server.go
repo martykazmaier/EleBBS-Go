@@ -194,6 +194,10 @@ func (ss *session) cmdGroup(name string) {
 		ss.line("411 No such newsgroup")
 		return
 	}
+	if code := ss.readAccess(g); code != 0 {
+		ss.line("%d %s", code, nntpStatus(code))
+		return
+	}
 	arts, err := mail.ReadJAM(g.Area.JAMBase)
 	if err != nil {
 		arts = nil
@@ -210,6 +214,12 @@ func (ss *session) cmdArticle(kind, arg string) {
 	if ss.cur.Name == "" && !byID {
 		ss.line("412 No newsgroup selected")
 		return
+	}
+	if ss.cur.Name != "" {
+		if code := ss.readAccess(ss.cur); code != 0 {
+			ss.line("%d %s", code, nntpStatus(code))
+			return
+		}
 	}
 	var a mail.Article
 	var ok bool
@@ -330,6 +340,10 @@ func (ss *session) cmdXover(arg string) {
 		ss.line("412 No newsgroup selected")
 		return
 	}
+	if code := ss.readAccess(ss.cur); code != 0 {
+		ss.line("%d %s", code, nntpStatus(code))
+		return
+	}
 	lo, hi := mail.HighLow(ss.arts)
 	if arg != "" {
 		if i := strings.IndexByte(arg, '-'); i >= 0 {
@@ -355,7 +369,55 @@ func (ss *session) cmdXover(arg string) {
 	ss.line(".")
 }
 
+func nntpStatus(code int) string {
+	switch code {
+	case 440:
+		return "Posting not allowed"
+	case 441:
+		return "Posting failed"
+	case 480:
+		return "Authentication required"
+	}
+	return ""
+}
+
+func (ss *session) readAccess(g mail.NewsGroup) int {
+	if !g.Ele.ReadNeedsAuth() {
+		return 0
+	}
+	if !ss.authed {
+		return 480
+	}
+	if g.Area.AreaNum != 0 && !mail.Accessible(g.Area, ss.user, false, 0) {
+		return 480
+	}
+	return 0
+}
+
+func (ss *session) postAccess(g mail.NewsGroup) int {
+	if g.Name == "" {
+		return 0
+	}
+	if !g.Posting {
+		return 440
+	}
+	if !g.Ele.PostNeedsAuth() {
+		return 0
+	}
+	if !ss.authed {
+		return 480
+	}
+	if g.Area.AreaNum != 0 && !mail.WriteAccessible(g.Area, ss.user) {
+		return 480
+	}
+	return 0
+}
+
 func (ss *session) cmdPost() {
+	if code := ss.postAccess(ss.cur); code != 0 {
+		ss.line("%d %s", code, nntpStatus(code))
+		return
+	}
 	ss.line("340 Send article to be posted. End with <CR-LF>.<CR-LF>")
 	var buf strings.Builder
 	tooLarge := false
@@ -388,13 +450,23 @@ func (ss *session) cmdPost() {
 		return
 	}
 	groupName := strings.TrimSpace(msg.Header.Get("Newsgroups"))
-	if groupName == "" || strings.Contains(groupName, ",") {
+	if i := strings.IndexByte(groupName, ','); i >= 0 {
+		groupName = strings.TrimSpace(groupName[:i])
+	}
+	if groupName == "" {
+		groupName = ss.cur.Name
+	}
+	if groupName == "" {
 		ss.line("441 Posting failed")
 		return
 	}
 	group, ok := mail.FindNewsGroup(ss.groups, groupName)
-	if !ok || !group.Posting {
+	if !ok {
 		ss.line("441 Posting failed")
+		return
+	}
+	if code := ss.postAccess(group); code != 0 {
+		ss.line("%d %s", code, nntpStatus(code))
 		return
 	}
 	from := strings.TrimSpace(msg.Header.Get("From"))

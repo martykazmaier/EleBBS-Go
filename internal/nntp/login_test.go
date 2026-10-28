@@ -185,7 +185,7 @@ func TestNNTPPostWritesToJAMAndRejectsReadOnlyGroup(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !tt.posting {
-				if !strings.HasPrefix(reply, "441 ") {
+				if !strings.HasPrefix(reply, "440 ") {
 					t.Fatalf("read-only POST reply %q", reply)
 				}
 				return
@@ -210,5 +210,92 @@ func TestNNTPPostWritesToJAMAndRejectsReadOnlyGroup(t *testing.T) {
 				t.Fatalf("posted body %q", arts[0].Body)
 			}
 		})
+	}
+}
+
+func TestNNTPPostRegisteredRequiresAuthThenWrites(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "news")
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.MsgBasePath = t.TempDir()
+	g.RaConfig.SysPath = g.RaConfig.MsgBasePath
+	g.RaConfig.LogFileName = filepath.Join(g.RaConfig.SysPath, "elebbs.log")
+	u := cfgrec.User{Name: "SysOp", PasswordCRC: crc.RA("hunter", true), Security: 100, Record: 0}
+	if err := os.WriteFile(filepath.Join(g.RaConfig.MsgBasePath, cfgrec.UserBaseName), cfgrec.EncodeUser(u), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := userbase.RebuildIndex(g); err != nil {
+		t.Fatal(err)
+	}
+	group := mail.NewsGroup{
+		Name:    "local.test",
+		Area:    cfgrec.MessageArea{AreaNum: 27, Name: "Local Test", JAMBase: base, WriteSecurity: 10},
+		Ele:     cfgrec.EleMessage{AreaNum: 27, AccessSettings: cfgrec.NwsPostSettings},
+		Posting: true,
+	}
+
+	srv, cli := net.Pipe()
+	defer cli.Close()
+	ss := &session{
+		cfg:    Config{G: g},
+		groups: []mail.NewsGroup{group},
+		cur:    group,
+		c:      srv,
+		r:      bufio.NewReader(srv),
+	}
+	go func() {
+		ss.cmdPost()
+		ss.cmdAuth("USER sysop")
+		ss.cmdAuth("PASS hunter")
+		ss.cmdPost()
+		_ = srv.Close()
+	}()
+
+	r := bufio.NewReader(cli)
+	denied, err := r.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(denied, "480 ") {
+		t.Fatalf("unauthenticated POST want 480, got %q", denied)
+	}
+	if _, err := r.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	okAuth, err := r.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(okAuth, "281 ") {
+		t.Fatalf("AUTHINFO PASS %q", okAuth)
+	}
+	ready, err := r.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(ready, "340 ") {
+		t.Fatalf("POST after auth %q", ready)
+	}
+	article := "From: sysop@example.test\r\n" +
+		"Newsgroups: local.test\r\n" +
+		"Subject: auth post\r\n" +
+		"\r\n" +
+		"hello\r\n" +
+		".\r\n"
+	if _, err := io.WriteString(cli, article); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := r.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(reply, "240 ") {
+		t.Fatalf("authenticated POST %q", reply)
+	}
+	arts, err := mail.ReadJAM(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arts) != 1 || arts[0].Subject != "auth post" {
+		t.Fatalf("posted %+v", arts)
 	}
 }
