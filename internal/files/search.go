@@ -204,6 +204,7 @@ func BumpTimesDL(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, rec uint16) {
 	if err != nil || int(rec) >= len(ents) {
 		return
 	}
-	ents[rec].Hdr.TimesDL++
-	_ = WriteFDB(g, area, ents)
+	h := ents[rec].Hdr
+	h.TimesDL++
+	_ = WriteHdr(g, area, int(rec), h)
 }

@@ -65,27 +65,21 @@ func Add(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, glob, uploader, desc string
 			Status(fmt.Sprintf("%-12s  - Duplicate, rejected.", name))
 			continue
 		}
-		now := PackDOSTime(time.Now())
-		h := cfgrec.FilesHdr{
-			Name:        name,
-			Size:        uint32(st.Size()),
-			CRC32:       ^uint32(0),
-			Uploader:    uploader,
-			UploadDate:  now,
-			FileDate:    PackDOSTime(st.ModTime()),
-			LastDL:      now,
-			LongDescPtr: -1,
-			LfnPtr:      -1,
+		if err := AddToFDB(g, area, name, uploader, desc, 0); err != nil {
+			if err == os.ErrExist {
+				Status(fmt.Sprintf("%-12s  - Duplicate, rejected.", name))
+				continue
+			}
+			Status(name + "  - copy failed: " + err.Error())
+			continue
 		}
-		pascal.PutString(h.NameRaw[:], name)
-		ents = append(ents, Entry{Hdr: h, Desc: desc})
 		Status(name + "  - Added succesfully.")
 		added++
 	}
 	if added == 0 {
 		return fmt.Errorf("no files added")
 	}
-	return WriteFDB(g, area, ents)
+	return nil
 }
 
 func copyFile(src, dst string) error {

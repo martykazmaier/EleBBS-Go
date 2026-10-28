@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"elebbs/internal/cfgrec"
+	"elebbs/internal/crc"
 	"elebbs/internal/pascal"
 )
 
@@ -119,6 +120,10 @@ func AddToFDB(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, name, uploader, desc s
 	if st.IsDir() {
 		return os.ErrInvalid
 	}
+	return catalogFrom(g, area, src, name, uploader, desc, attrib, st)
+}
+
+func catalogFrom(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, src, name, uploader, desc string, attrib byte, st os.FileInfo) error {
 	ents, err := ReadFDB(g, area)
 	if err != nil {
 		return err
@@ -132,8 +137,12 @@ func AddToFDB(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, name, uploader, desc s
 		uploader = g.RaConfig.Sysop
 	}
 	now := PackDOSTime(time.Now())
+	lfnPtr, short, err := addLfnPtr(g, area, name, src)
+	if err != nil {
+		return err
+	}
 	h := cfgrec.FilesHdr{
-		Name:        name,
+		Name:        short,
 		Size:        uint32(st.Size()),
 		CRC32:       ^uint32(0),
 		Uploader:    uploader,
@@ -143,9 +152,61 @@ func AddToFDB(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, name, uploader, desc s
 		Attrib:      attrib,
 		Cost:        area.DefCost,
 		LongDescPtr: -1,
-		LfnPtr:      -1,
+		LfnPtr:      lfnPtr,
 	}
-	pascal.PutString(h.NameRaw[:], name)
-	ents = append(ents, Entry{Hdr: h, Desc: desc})
-	return WriteFDB(g, area, ents)
+	pascal.PutString(h.NameRaw[:], short)
+	if strings.TrimSpace(desc) != "" {
+		ptr, err := appendDescription(g, area, pascal.ToCP437(desc))
+		if err != nil {
+			return err
+		}
+		h.LongDescPtr = ptr
+	}
+	return addHeader(g, area, h)
+}
+
+func fileCRC32(path string) uint32 {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ^uint32(0)
+	}
+	return crc.CRC32(b, 0xFFFFFFFF)
+}
+
+// AfterUpload is Pascal FTPSERV cmdStor FDB update: WriteHdr in place when
+// the name already exists, otherwise AddLfnPtr + AddHeader. Never rewrites TXT.
+func AfterUpload(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, src, uploader string) error {
+	src = strings.TrimSpace(src)
+	name := filepath.Base(src)
+	if name == "" {
+		return os.ErrNotExist
+	}
+	st, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if st.IsDir() {
+		return os.ErrInvalid
+	}
+	ents, err := ReadFDB(g, area)
+	if err != nil {
+		return err
+	}
+	now := PackDOSTime(time.Now())
+	for i, e := range ents {
+		if e.Hdr.Deleted() {
+			continue
+		}
+		if !strings.EqualFold(e.Hdr.Name, name) && !strings.EqualFold(LongName(g, area, e.Hdr), name) {
+			continue
+		}
+		h := e.Hdr
+		h.CRC32 = fileCRC32(src)
+		h.Size = uint32(st.Size())
+		h.FileDate = PackDOSTime(st.ModTime())
+		h.UploadDate = now
+		h.LastDL = now
+		return WriteHdr(g, area, i, h)
+	}
+	return catalogFrom(g, area, src, name, uploader, "", 0, st)
 }

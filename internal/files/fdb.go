@@ -157,6 +157,124 @@ func descAt(txt []byte, off int) string {
 	return strings.TrimRight(s, "\n")
 }
 
+func headerToIdx(h cfgrec.FilesHdr) cfgrec.FilesIdx {
+	ix := cfgrec.HeaderToIdx(h)
+	for k := 0; k < 5; k++ {
+		ix.KeywordCRC[k] = crc.RA(h.Keywords[k], true)
+	}
+	return ix
+}
+
+func isLFN(s string) bool {
+	s = filepath.Base(s)
+	if len(s) > 12 {
+		return true
+	}
+	if strings.Contains(s, ",") || strings.Contains(s, " ") {
+		return true
+	}
+	dot := strings.IndexByte(s, '.')
+	if dot < 0 {
+		return false
+	}
+	if len(s)-dot-1 > 3 {
+		return true
+	}
+	return strings.Contains(s[dot+1:], ".")
+}
+
+// appendDescription is Pascal MgrFileObj.AddDescription: append NUL-terminated
+// bytes to the area .txt and return the previous file size as LongDescPtr.
+func appendDescription(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, raw []byte) (int32, error) {
+	if len(raw) == 0 {
+		return -1, nil
+	}
+	if raw[len(raw)-1] != 0 {
+		raw = append(append([]byte{}, raw...), 0)
+	}
+	if err := EnsureFDBDirs(g); err != nil {
+		return -1, err
+	}
+	p := txtPath(g, area)
+	f, err := os.OpenFile(p, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return -1, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return -1, err
+	}
+	off := st.Size()
+	if _, err := f.WriteAt(raw, off); err != nil {
+		return -1, err
+	}
+	return int32(off), nil
+}
+
+func addLfnPtr(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, longName, fullPath string) (int32, string, error) {
+	short := filepath.Base(longName)
+	if !isLFN(short) {
+		return -1, short, nil
+	}
+	ptr, err := appendDescription(g, area, pascal.ToCP437(short))
+	if err != nil {
+		return -1, short, err
+	}
+	if sn := dosShortName(fullPath); sn != "" {
+		short = filepath.Base(sn)
+	}
+	return ptr, short, nil
+}
+
+// addHeader is Pascal MgrFileObj.AddHeader: append one HDR and IDX record.
+func addHeader(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, h cfgrec.FilesHdr) error {
+	if err := EnsureFDBDirs(g); err != nil {
+		return err
+	}
+	if h.NameRaw[0] == 0 && h.Name != "" {
+		pascal.PutString(h.NameRaw[:], h.Name)
+	}
+	hdrB := cfgrec.EncodeFilesHdr(h)
+	idxB := cfgrec.EncodeFilesIdx(headerToIdx(h))
+	if err := appendFile(hdrPath(g, area), hdrB); err != nil {
+		return err
+	}
+	return appendFile(idxPath(g, area), idxB)
+}
+
+func appendFile(path string, b []byte) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteAt(b, st.Size())
+	return err
+}
+
+// WriteHdr is Pascal MgrFileObj.WriteHdr: overwrite one HDR record in place.
+func WriteHdr(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, rec int, h cfgrec.FilesHdr) error {
+	if rec < 0 {
+		return os.ErrInvalid
+	}
+	if h.NameRaw[0] == 0 && h.Name != "" {
+		pascal.PutString(h.NameRaw[:], h.Name)
+	}
+	p := hdrPath(g, area)
+	f, err := os.OpenFile(p, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteAt(cfgrec.EncodeFilesHdr(h), int64(rec)*int64(cfgrec.FilesHdrSize))
+	return err
+}
+
 func WriteFDB(g *cfgrec.GlobalCfg, area cfgrec.FilesArea, entries []Entry) error {
 	if err := EnsureFDBDirs(g); err != nil {
 		return err

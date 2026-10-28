@@ -102,28 +102,7 @@ func addAttachToFileArea(g *cfgrec.GlobalCfg, areaNum int, name string, data []b
 	if err := os.WriteFile(dest, data, 0644); err != nil {
 		return
 	}
-	ents, err := files.ReadFDB(g, a)
-	if err != nil {
-		ents = nil
-	}
-	now := files.PackDOSTime(time.Now())
-	st, _ := os.Stat(dest)
-	sz := uint32(len(data))
-	if st != nil {
-		sz = uint32(st.Size())
-	}
-	ents = append(ents, files.Entry{Hdr: cfgrec.FilesHdr{
-		Name:        name,
-		Size:        sz,
-		CRC32:       0xFFFFFFFF,
-		Uploader:    "EleMAIL",
-		UploadDate:  now,
-		FileDate:    now,
-		LastDL:      now,
-		LongDescPtr: -1,
-		LfnPtr:      -1,
-	}})
-	_ = files.WriteFDB(g, a, ents)
+	_ = files.AfterUpload(g, a, dest, "EleMAIL")
 }
 
 // processInboundAttach is Pascal ProcessAttachments with DoAttach=TRUE.

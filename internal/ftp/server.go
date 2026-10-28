@@ -622,7 +622,7 @@ func (ss *session) cmdStor(name string) {
 	if up == "" {
 		up = "Anonymous"
 	}
-	_ = files.Add(ss.srv.cfg.G, a, dest, up, "")
+	_ = files.AfterUpload(ss.srv.cfg.G, a, dest, up)
 	ss.reply(226, "Transfer complete")
 	logx.Write(ss.srv.cfg.G, 0, '>', fmt.Sprintf("[FTPSERV] [%s] Received %s (%d bytes)", host(ss.c), name, n))
 	ss.xferLog("STOR", name, n)
@@ -663,10 +663,12 @@ func (ss *session) cmdDele(name string) {
 	}
 	for i := range ents {
 		if ents[i].Hdr.RecordNum == e.Hdr.RecordNum {
-			ents[i].Hdr.Attrib |= cfgrec.AttrDeleted
+			h := ents[i].Hdr
+			h.Attrib |= cfgrec.AttrDeleted
+			_ = files.WriteHdr(ss.srv.cfg.G, a, i, h)
+			break
 		}
 	}
-	_ = files.WriteFDB(ss.srv.cfg.G, a, ents)
 	_ = os.Remove(files.DiskFile(a, e.Hdr.Name))
 	ss.reply(250, "File deleted")
 }
