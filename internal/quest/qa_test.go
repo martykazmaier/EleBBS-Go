@@ -997,3 +997,164 @@ func TestFileWriteUsesCP437(t *testing.T) {
 		t.Fatalf("Filewrite wrote UTF-8: %q", b)
 	}
 }
+
+func TestSetCommentBareNumberUsesAnswer(t *testing.T) {
+	dir := t.TempDir()
+	script := "ASSIGN 5 user@gmail.com\r\nASSIGN 10 #5\r\nSETCOMMENT 10\r\nQUIT\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "validate.q-a"), []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.MsgBasePath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	line := &cfgrec.LineCfg{AnsiOn: true, User: cfgrec.User{Name: "Marty", Record: 1}}
+	line.Language.QuesPath = dir
+	st := &memStream{}
+	tio := term.New(st, g, line)
+	Run(tio, g, line, "validate", "")
+	if line.User.Comment != "user@gmail.com" {
+		t.Fatalf("SetComment 10 = %q want email from #10, not the digits", line.User.Comment)
+	}
+}
+
+func TestValidateDisplayFiltersF10Color(t *testing.T) {
+	dir := t.TempDir()
+	script := "ASSIGN 5 martykazmaier@gmail.com\r\n" +
+		"Display \"|`Y-2:`F15:Your validation code has been emailed to ``F10:\" 5\r\n" +
+		"QUIT\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "validate.q-a"), []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	line := &cfgrec.LineCfg{AnsiOn: true}
+	line.Language.QuesPath = dir
+	st := &memStream{}
+	tio := term.New(st, g, line)
+	Run(tio, g, line, "validate", "")
+	out := st.out.Bytes()
+	if !bytes.Contains(out, []byte("martykazmaier@gmail.com")) {
+		t.Fatalf("email missing: %q", out)
+	}
+	plain := stripCSI(out)
+	if bytes.Contains(plain, []byte("F10")) {
+		t.Fatalf("`F10: leaked as text: %q (plain %q)", out, plain)
+	}
+}
+
+func TestEmptyNoemailCtlDoesNotMatchDomain(t *testing.T) {
+	dir := t.TempDir()
+	ctl := filepath.Join(dir, "noemail.ctl")
+	if err := os.WriteFile(ctl, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	script := "" +
+		"ASSIGN 5 user@gmail.com\r\n" +
+		"FILEOPEN 1 " + ctl + "\r\n" +
+		"ASSIGN 8 0\r\n" +
+		"WHILE 8 <> \"NO\" do\r\n" +
+		" FILEREAD 1 9\r\n" +
+		" FILERESULT 1 8\r\n" +
+		" IF 9 in #5\r\n" +
+		"  DISPLAY \"DOMAIN-FOUND\"\r\n" +
+		" ENDIF\r\n" +
+		"ENDWHILE\r\n" +
+		"FILECLOSE 1\r\n" +
+		"DISPLAY \"SCAN-DONE\"\r\n" +
+		"QUIT\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "validate.q-a"), []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	line := &cfgrec.LineCfg{AnsiOn: true}
+	line.Language.QuesPath = dir
+	st := &memStream{}
+	tio := term.New(st, g, line)
+	Run(tio, g, line, "validate", "")
+	out := st.out.Bytes()
+	if bytes.Contains(out, []byte("DOMAIN-FOUND")) {
+		t.Fatalf("blank noemail.ctl reported a domain: %q", out)
+	}
+	if !bytes.Contains(out, []byte("SCAN-DONE")) {
+		t.Fatalf("scan did not finish: %q", out)
+	}
+}
+
+func TestNoemailCtlMatchesListedDomain(t *testing.T) {
+	dir := t.TempDir()
+	ctl := filepath.Join(dir, "noemail.ctl")
+	if err := os.WriteFile(ctl, []byte("hotmail.com\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	script := "" +
+		"ASSIGN 5 user@hotmail.com\r\n" +
+		"FILEOPEN 1 " + ctl + "\r\n" +
+		"ASSIGN 8 0\r\n" +
+		"WHILE 8 <> \"NO\" do\r\n" +
+		" FILEREAD 1 9\r\n" +
+		" FILERESULT 1 8\r\n" +
+		" IF 9 in #5\r\n" +
+		"  DISPLAY \"DOMAIN-FOUND\"\r\n" +
+		" ENDIF\r\n" +
+		"ENDWHILE\r\n" +
+		"FILECLOSE 1\r\n" +
+		"QUIT\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "validate.q-a"), []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	line := &cfgrec.LineCfg{AnsiOn: true}
+	line.Language.QuesPath = dir
+	st := &memStream{}
+	tio := term.New(st, g, line)
+	Run(tio, g, line, "validate", "")
+	if !bytes.Contains(st.out.Bytes(), []byte("DOMAIN-FOUND")) {
+		t.Fatalf("hotmail.com should match: %q", st.out.Bytes())
+	}
+}
+
+func TestBlankCtlLineDoesNotMatchDomain(t *testing.T) {
+	dir := t.TempDir()
+	ctl := filepath.Join(dir, "noemail.ctl")
+	if err := os.WriteFile(ctl, []byte("\r\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	script := "" +
+		"ASSIGN 5 user@gmail.com\r\n" +
+		"FILEOPEN 1 " + ctl + "\r\n" +
+		"ASSIGN 8 0\r\n" +
+		"WHILE 8 <> \"NO\" do\r\n" +
+		" FILEREAD 1 9\r\n" +
+		" FILERESULT 1 8\r\n" +
+		" IF 9 in #5\r\n" +
+		"  DISPLAY \"DOMAIN-FOUND\"\r\n" +
+		" ENDIF\r\n" +
+		"ENDWHILE\r\n" +
+		"FILECLOSE 1\r\n" +
+		"DISPLAY \"SCAN-DONE\"\r\n" +
+		"QUIT\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "validate.q-a"), []byte(script), 0644); err != nil {
+		t.Fatal(err)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	line := &cfgrec.LineCfg{AnsiOn: true}
+	line.Language.QuesPath = dir
+	st := &memStream{}
+	tio := term.New(st, g, line)
+	Run(tio, g, line, "validate", "")
+	out := st.out.Bytes()
+	if bytes.Contains(out, []byte("DOMAIN-FOUND")) {
+		t.Fatalf("blank ctl line reported a domain: %q", out)
+	}
+	if !bytes.Contains(out, []byte("SCAN-DONE")) {
+		t.Fatalf("scan did not finish: %q", out)
+	}
+}

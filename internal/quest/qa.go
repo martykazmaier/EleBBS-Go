@@ -3,6 +3,7 @@ package quest
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -686,25 +687,43 @@ func (q *vm) cmdFileRead(rest string) {
 	dst := atoi(dstWord)
 	if slot < 1 || slot > maxFileStack || q.files[slot] == nil || q.files[slot].r == nil {
 		q.put(dst, "")
+		if slot >= 1 && slot <= maxFileStack {
+			q.fileRes[slot] = "NO"
+		}
 		return
 	}
 	s, err := q.files[slot].r.ReadBytes('\n')
 	s = bytes.TrimRight(s, "\r\n \t")
-	if err != nil && len(s) == 0 {
+	// Pascal FileRead: IoResult=0 → FileResult YES; EOF/error → NO.
+	if len(s) == 0 && err != nil {
 		q.put(dst, "")
+		q.fileRes[slot] = "NO"
 		return
 	}
 	q.put(dst, pascal.FromCP437(s))
+	if err != nil && err != io.EOF {
+		q.fileRes[slot] = "NO"
+		return
+	}
+	q.fileRes[slot] = "YES"
 }
 
 func (q *vm) cmdFileWrite(rest string) {
 	slotWord, val := firstWord(rest)
 	slot := atoi(slotWord)
 	if slot < 1 || slot > maxFileStack || q.files[slot] == nil || q.files[slot].f == nil {
+		if slot >= 1 && slot <= maxFileStack {
+			q.fileRes[slot] = "NO"
+		}
 		return
 	}
 	val = q.value(val)
-	_, _ = q.files[slot].f.Write(append(pascal.ToCP437(val), '\r', '\n'))
+	_, err := q.files[slot].f.Write(append(pascal.ToCP437(val), '\r', '\n'))
+	if err != nil {
+		q.fileRes[slot] = "NO"
+		return
+	}
+	q.fileRes[slot] = "YES"
 }
 
 func (q *vm) closeSlot(slot int) {
@@ -824,6 +843,12 @@ func (q *vm) testIf(rest string) bool {
 		lvU, rvU := pascal.UpCase(lv), pascal.UpCase(rv)
 		pos := strings.Index(rvU, lvU)
 		found := pos >= 0
+		// Empty needle matches every string in Go (and Delphi Pos). VALIDATE.Q-A
+		// uses "If 9 in #5" against noemail.ctl; a blank line must not count as a domain.
+		if lvU == "" {
+			found = false
+			pos = -1
+		}
 		if found && at >= 1 {
 			q.put(at, strconv.Itoa(pos+1))
 		}
@@ -881,6 +906,20 @@ func (q *vm) put(n int, s string) {
 		return
 	}
 	q.ans[n] = s
+}
+
+func (q *vm) answerArg(s string) string {
+	s = trimRA(s)
+	if s == "" {
+		return ""
+	}
+	if s[0] == '#' || s[0] == '%' {
+		return q.value(s)
+	}
+	if n := atoi(s); n >= 1 && n <= maxAnswers && isAnswerNum(s) {
+		return q.get(n)
+	}
+	return q.value(s)
 }
 
 func (q *vm) value(s string) string {

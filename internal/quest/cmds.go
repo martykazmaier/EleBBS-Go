@@ -267,7 +267,10 @@ func (q *vm) cmdExtra(cmd, rest string) {
 		}
 	case "SETCOMMENT":
 		if q.line != nil {
-			q.line.User.Comment = q.value(strings.TrimSpace(rest))
+			// Pascal SETCOMMENT <n>: always Answers.Get(n), not a literal.
+			// VALIDATE.Q-A does "SetComment 10" after "Assign 10 #5" so blat ^F]
+			// gets the email, not the digits "10".
+			q.line.User.Comment = q.answerArg(strings.TrimSpace(rest))
 			_ = userbase.Write(q.g, q.line.User)
 		}
 	case "SETOLM", "SETCHATREASON", "SETCHATWANTED", "SETSTATUSBAR":

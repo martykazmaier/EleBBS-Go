@@ -1386,6 +1386,14 @@ func (t *IO) writeRA(src []byte, hot map[byte]struct{}) byte {
 			}
 			code := src[i+1]
 			if code == '`' {
+				// `` is a literal backtick. VALIDATE.Q-A writes ``F10: meaning
+				// that backtick plus a following `F10: color — leave the second
+				// ` in place when a RADU command follows.
+				if i+2 < len(src) && isRaduLetter(src[i+2]) {
+					buf = append(buf, '`')
+					i++
+					continue
+				}
 				buf = append(buf, '`')
 				i += 2
 				continue
