@@ -3,7 +3,9 @@ package files
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"elebbs/internal/cfgrec"
@@ -93,31 +95,90 @@ func AreaInGroup(a cfgrec.FilesArea, group uint16) bool {
 }
 
 func GroupAccess(gr cfgrec.Group, u cfgrec.User) bool {
-	if gr.Security == 0 {
-		return true
+	if strings.TrimSpace(gr.Name) == "" || gr.AreaNum == 0 {
+		return false
+	}
+	if !cfgrec.FlagAccess(u.Flags, gr.Flags, gr.NotFlags) {
+		return false
 	}
 	return u.Security >= gr.Security
 }
 
 func ListAccess(a cfgrec.FilesArea, u cfgrec.User) bool {
-	if a.ListSecurity == 0 {
-		return true
-	}
-	return u.Security >= a.ListSecurity
+	return CheckFileAreaAccess(a, u, false, false, false, true, 0)
 }
 
 func DownloadAccess(a cfgrec.FilesArea, u cfgrec.User) bool {
-	if a.Security == 0 {
-		return true
-	}
-	return u.Security >= a.Security
+	return CheckFileAreaAccess(a, u, true, false, false, false, 0)
 }
 
 func UploadAccess(a cfgrec.FilesArea, u cfgrec.User) bool {
-	if a.UploadSecurity == 0 {
-		return u.Security >= a.Security
+	return CheckFileAreaAccess(a, u, false, false, true, false, 0)
+}
+
+// CheckFileAreaAccess is Pascal access_u.CheckFileAreaAccess.
+func CheckFileAreaAccess(a cfgrec.FilesArea, u cfgrec.User, download, group, upload, list bool, groupNr uint16) bool {
+	if download {
+		if a.Security > u.Security {
+			return false
+		}
+		if !cfgrec.FlagAccess(u.Flags, a.Flags, a.NotFlags) {
+			return false
+		}
 	}
-	return u.Security >= a.UploadSecurity
+	if upload {
+		if a.UploadSecurity > u.Security {
+			return false
+		}
+		if !cfgrec.FlagAccess(u.Flags, a.UploadFlags, a.UploadNotFlags) {
+			return false
+		}
+	}
+	if list {
+		if a.ListSecurity > u.Security {
+			return false
+		}
+		if !cfgrec.FlagAccess(u.Flags, a.ListFlags, a.ListNotFlags) {
+			return false
+		}
+	}
+	if strings.TrimSpace(a.Name) == "" || strings.TrimSpace(a.FilePath) == "" || a.AreaNum == 0 {
+		return false
+	}
+	if a.Age > userAge(u) {
+		return false
+	}
+	if group && !AreaInGroup(a, groupNr) {
+		return false
+	}
+	return true
+}
+
+func userAge(u cfgrec.User) byte {
+	bd := strings.TrimSpace(u.BirthDate)
+	if len(bd) < 8 {
+		return 0
+	}
+	month, _ := strconv.Atoi(bd[0:2])
+	day, _ := strconv.Atoi(bd[3:5])
+	year, _ := strconv.Atoi(bd[6:8])
+	if year > 10 {
+		year += 1900
+	} else {
+		year += 2000
+	}
+	now := time.Now()
+	age := now.Year() - year
+	if month > int(now.Month()) || (month == int(now.Month()) && now.Day() < day) {
+		age--
+	}
+	if age < 0 {
+		return 0
+	}
+	if age > 255 {
+		return 255
+	}
+	return byte(age)
 }
 
 // ConvDirName matches EleBBS FTP: illegal path chars become underscores.

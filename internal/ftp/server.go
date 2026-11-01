@@ -256,28 +256,37 @@ func (ss *session) cmdUser(name string) {
 	ss.authed = false
 	ss.anon = false
 	name = pascal.Trim(name)
-	if ss.srv.cfg.Anonymous && (strings.EqualFold(name, "anonymous") || strings.EqualFold(name, "ftp")) {
-		ss.anon = true
-		ss.user.Name = "Anonymous"
-		ss.user.Handle = "Anonymous"
-		ss.reply(331, "Anonymous access OK, send e-mail as password")
-		return
+	if strings.EqualFold(name, "ftp") {
+		name = "anonymous"
 	}
+	anonName := strings.EqualFold(name, "anonymous")
 	u, ok := userbase.Search(ss.srv.cfg.G, name)
-	if !ok {
-		ss.reply(331, "Password required")
+	if ok {
+		if !anonName && !ss.srv.cfg.Anonymous && u.Guest() {
+			ss.reply(331, "User name, okay. Please send password.")
+			return
+		}
+		ss.user = u
+		ss.gotUser = true
+	}
+	if anonName {
+		ss.anon = true
+		if !ss.gotUser {
+			ss.user.Name = "Anonymous"
+			ss.user.Handle = "Anonymous"
+			ss.gotUser = true
+		}
+		ss.reply(331, "User name, okay. Please send email address.")
 		return
 	}
-	ss.user = u
-	ss.gotUser = true
-	ss.reply(331, "Password required")
+	ss.reply(331, "User name, okay. Please send password.")
 }
 
 func (ss *session) cmdPass(pw string) {
 	if ss.anon {
 		ss.authed = true
 		ss.reply(230, "Anonymous user logged in")
-		logx.Write(ss.srv.cfg.G, 0, '>', "[FTPSERV] ["+host(ss.c)+"] Anonymous on-line")
+		logx.Write(ss.srv.cfg.G, 0, '>', "[FTPSERV] ["+host(ss.c)+"] Anonymous ("+pw+") on-line")
 		return
 	}
 	if !ss.gotUser || !userbase.CheckPassword(ss.user, pw, ss.srv.cfg.G.RaConfig.StrictPwdChecking) {
@@ -342,7 +351,7 @@ func (ss *session) cmdCwd(arg string) {
 			continue
 		}
 		a, ok := files.FindAreaDir(ss.srv.areas, p)
-		if !ok || !files.AreaInGroup(a, uint16(group)) || !files.ListAccess(a, ss.user) {
+		if !ok || !files.CheckFileAreaAccess(a, ss.user, false, true, false, true, uint16(group)) {
 			ss.reply(550, "Directory not found")
 			return
 		}
@@ -472,29 +481,35 @@ func (ss *session) cmdList(arg string, nlst bool) {
 	write := func(s string) { _, _ = io.WriteString(dc, s+"\r\n") }
 	if area > 0 {
 		a, ok := files.FindArea(ss.srv.areas, uint16(area))
-		if ok && files.ListAccess(a, ss.user) {
+		if ok && files.CheckFileAreaAccess(a, ss.user, false, false, false, true, uint16(group)) {
 			if ss.srv.cfg.IndexName != "" {
 				write(listLine(true, 0, now, files.ConvDirName(ss.srv.cfg.IndexName), nlst))
 			}
 			ents, _ := files.ReadFDB(ss.srv.cfg.G, a)
 			for _, e := range ents {
-				if e.Hdr.Deleted() || e.Hdr.Unlisted() || e.Hdr.Comment() || e.Hdr.Missing() {
+				if e.Hdr.Deleted() || e.Hdr.Unlisted() || e.Hdr.Comment() || e.Hdr.Missing() || e.Hdr.NotAvail() || e.Hdr.Password != "" {
 					continue
 				}
-				if !files.MatchWild(wild, e.Hdr.Name) {
+				long := files.LongName(ss.srv.cfg.G, a, e.Hdr)
+				disp := files.ConvDirName(long)
+				if !files.MatchWild(wild, long) && !files.MatchWild(wild, e.Hdr.Name) && !files.MatchWild(wild, disp) {
 					continue
+				}
+				shown := disp
+				if nlst {
+					shown = long
 				}
 				dt := files.UnpackDOSTime(e.Hdr.FileDate)
 				ds := now
 				if !dt.IsZero() {
 					ds = dt.Format("Jan 02  2006")
 				}
-				write(listLine(true, int64(e.Hdr.Size), ds, e.Hdr.Name, nlst))
+				write(listLine(true, int64(e.Hdr.Size), ds, shown, nlst))
 			}
 		}
 	} else if group > 0 {
 		for _, a := range ss.srv.areas {
-			if !files.AreaInGroup(a, uint16(group)) || !files.ListAccess(a, ss.user) {
+			if !files.CheckFileAreaAccess(a, ss.user, false, true, false, true, uint16(group)) {
 				continue
 			}
 			if !files.MatchWild(wild, files.ConvDirName(a.Name)) {
@@ -533,20 +548,38 @@ func (ss *session) findFile(name string) (cfgrec.FilesArea, files.Entry, bool) {
 		if e.Hdr.Deleted() || e.Hdr.Comment() {
 			continue
 		}
-		if strings.EqualFold(e.Hdr.Name, name) || strings.EqualFold(files.ConvDirName(e.Hdr.Name), name) {
+		long := files.LongName(ss.srv.cfg.G, a, e.Hdr)
+		if strings.EqualFold(e.Hdr.Name, name) ||
+			strings.EqualFold(files.ConvDirName(e.Hdr.Name), name) ||
+			strings.EqualFold(long, name) ||
+			strings.EqualFold(files.ConvDirName(long), name) {
 			return a, e, true
 		}
 	}
 	return a, files.Entry{}, false
 }
 
+func (ss *session) diskPath(a cfgrec.FilesArea, e files.Entry) string {
+	long := files.LongName(ss.srv.cfg.G, a, e.Hdr)
+	if p := files.FileOnDisk(ss.srv.cfg.G, a, long); p != "" {
+		return p
+	}
+	if p := files.FileOnDisk(ss.srv.cfg.G, a, e.Hdr.Name); p != "" {
+		return p
+	}
+	if long != "" && !strings.EqualFold(long, e.Hdr.Name) {
+		return files.DiskFile(a, long)
+	}
+	return files.DiskFile(a, e.Hdr.Name)
+}
+
 func (ss *session) cmdRetr(name string) {
 	a, e, ok := ss.findFile(name)
-	if !ok || !files.DownloadAccess(a, ss.user) {
+	if !ok || !files.DownloadAccess(a, ss.user) || !ftpFileDownloadOK(e) {
 		ss.reply(550, "File not found")
 		return
 	}
-	path := files.DiskFile(a, e.Hdr.Name)
+	path := ss.diskPath(a, e)
 	f, err := os.Open(path)
 	if err != nil {
 		ss.reply(550, "File not found")
@@ -575,15 +608,31 @@ func (ss *session) cmdRetr(name string) {
 	ss.xferLog("RETR", e.Hdr.Name, n)
 }
 
+func ftpFileDownloadOK(e files.Entry) bool {
+	if e.Hdr.Deleted() || e.Hdr.NotAvail() || e.Hdr.Missing() || e.Hdr.Password != "" {
+		return false
+	}
+	return true
+}
+
 func (ss *session) cmdStor(name string) {
 	if ss.area <= 0 {
 		ss.reply(550, "CWD into a file area first")
 		return
 	}
 	a, ok := files.FindArea(ss.srv.areas, uint16(ss.area))
-	if !ok || !files.UploadAccess(a, ss.user) {
+	g, gok := files.FindGroup(ss.srv.grps, uint16(ss.group))
+	if !ok || !gok || !files.GroupAccess(g, ss.user) || !files.UploadAccess(a, ss.user) {
 		ss.reply(550, "Permission denied")
 		return
+	}
+	if a.UploadArea > 0 {
+		ua, uok := files.FindArea(ss.srv.areas, a.UploadArea)
+		if !uok {
+			ss.reply(550, "Permission denied")
+			return
+		}
+		a = ua
 	}
 	name = filepath.Base(name)
 	dest := files.DiskFile(a, name)
@@ -669,7 +718,7 @@ func (ss *session) cmdDele(name string) {
 			break
 		}
 	}
-	_ = os.Remove(files.DiskFile(a, e.Hdr.Name))
+	_ = os.Remove(ss.diskPath(a, e))
 	ss.reply(250, "File deleted")
 }
 

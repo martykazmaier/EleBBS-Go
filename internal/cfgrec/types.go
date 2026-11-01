@@ -8,9 +8,9 @@ import (
 const (
 	VersionMajor = 0
 	VersionMinor = 10
-	VersionID    = "0.11.b6-go"
+	VersionID    = "0.11.b7-go"
 	FullProgName = "EleBBS/W32"
-	PidName      = "EleBBS/W32 v0.11.b6-go"
+	PidName      = "EleBBS/W32 v0.11.b7-go"
 	PlatformID   = "W32"
 	VersIDWord   = 0x250
 	EleVersID    = 0x010
@@ -123,6 +123,23 @@ func (f Flag) Has(bit int) bool {
 		return false
 	}
 	return f[bit/8]&(1<<uint(bit%8)) != 0
+}
+
+// FlagAccess is Pascal CheckFlagAccess: every On bit must be set on the user,
+// and every Off bit must be clear.
+func FlagAccess(user, on, off Flag) bool {
+	for col := 0; col < 4; col++ {
+		for row := 0; row < 8; row++ {
+			bit := byte(1 << uint(row))
+			if on[col]&bit != 0 && user[col]&bit == 0 {
+				return false
+			}
+			if off[col]&bit != 0 && user[col]&bit != 0 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func flagColRow(letter, digit byte) (col, row int, ok bool) {
@@ -606,13 +623,19 @@ type FilesArea struct {
 	ConvertExt     byte
 	Group          uint16
 	Attrib2        byte
-	DefCost        uint16
-	UploadArea     uint16
-	UploadSecurity uint16
-	Security       uint16
-	ListSecurity   uint16
-	AltGroup       [3]uint16
-	Device         byte
+	DefCost         uint16
+	UploadArea      uint16
+	UploadSecurity  uint16
+	UploadFlags     Flag
+	UploadNotFlags  Flag
+	Security        uint16
+	Flags           Flag
+	NotFlags        Flag
+	ListSecurity    uint16
+	ListFlags       Flag
+	ListNotFlags    Flag
+	AltGroup        [3]uint16
+	Device          byte
 }
 
 type FilesHdr struct {

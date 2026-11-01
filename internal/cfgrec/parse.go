@@ -260,11 +260,14 @@ func ParseFilesArea(b []byte) FilesArea {
 	a.DefCost = r.U16()
 	a.UploadArea = r.U16()
 	a.UploadSecurity = r.U16()
-	r.Skip(8) // upload flags + not flags
+	a.UploadFlags = Flag(r.Flags())
+	a.UploadNotFlags = Flag(r.Flags())
 	a.Security = r.U16()
-	r.Skip(8) // flags + not flags
+	a.Flags = Flag(r.Flags())
+	a.NotFlags = Flag(r.Flags())
 	a.ListSecurity = r.U16()
-	r.Skip(8)
+	a.ListFlags = Flag(r.Flags())
+	a.ListNotFlags = Flag(r.Flags())
 	a.AltGroup[0] = r.U16()
 	a.AltGroup[1] = r.U16()
 	a.AltGroup[2] = r.U16()
