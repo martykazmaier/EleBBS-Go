@@ -494,6 +494,56 @@ func TestGetKeyDoesNotSwallowFollowingHotKey(t *testing.T) {
 	}
 }
 
+func TestRaduDuplicateRepeatsChar(t *testing.T) {
+	st := &memStream{}
+	tio := New(st, &cfgrec.GlobalCfg{}, &cfgrec.LineCfg{AnsiOn: true, AvatarOn: true})
+	// MA-CHNG.Q-A :HELP wipes the list with `D32,40:` (space × 40) then `|`.
+	tio.WriteRA("`D32,40:")
+	got := st.out.Bytes()
+	want := bytes.Repeat([]byte{' '}, 40)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("D32,40 want 40 spaces, got %q", got)
+	}
+	if bytes.Contains(got, []byte{0x16, 0x19}) {
+		t.Fatalf("Avatar repeat must not replace the wipe spaces: %q", got)
+	}
+}
+
+func TestRaduChangerHelpWipeAnchorsColumn(t *testing.T) {
+	st := &memStream{}
+	tio := New(st, &cfgrec.GlobalCfg{}, &cfgrec.LineCfg{AnsiOn: true})
+	// Lightbar leaves the cursor mid-name; HELP does `Y` then `X` then `D32,40:`.
+	tio.CurX, tio.CurY = 47, 8
+	tio.WriteRA("`Y3:")
+	st.out.Reset()
+	tio.WriteRA("`X20:`D32,40:")
+	out := st.out.Bytes()
+	if !bytes.Contains(out, []byte("\x1b[3;20H")) {
+		t.Fatalf("wipe should CUP to 3;20, got %q", out)
+	}
+	if !bytes.Contains(out, bytes.Repeat([]byte{' '}, 40)) {
+		t.Fatalf("wipe missing 40 spaces: %q", out)
+	}
+}
+
+func TestRaduChangerHelpSplitDisplay(t *testing.T) {
+	st := &memStream{}
+	tio := New(st, &cfgrec.GlobalCfg{}, &cfgrec.LineCfg{AnsiOn: true})
+	tio.CurX, tio.CurY = 47, 8
+	tio.WriteRA("`Y3:")
+	tio.WriteRA("`X")
+	tio.WriteRA("20")
+	st.out.Reset()
+	tio.WriteRA(":`D32,40:\r\n")
+	out := st.out.Bytes()
+	if !bytes.Contains(out, []byte("\x1b[3;20H")) {
+		t.Fatalf("split Display `X` + D should CUP 3;20, got %q", out)
+	}
+	if !bytes.Contains(out, bytes.Repeat([]byte{' '}, 40)) {
+		t.Fatalf("split Display missing wipe: %q", out)
+	}
+}
+
 func TestRaduXYKeepsColumn(t *testing.T) {
 	st := &memStream{}
 	tio := New(st, &cfgrec.GlobalCfg{}, &cfgrec.LineCfg{AnsiOn: true})

@@ -2,6 +2,7 @@ package menu
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,7 +123,7 @@ func TestMsgBarPassesFileAttach(t *testing.T) {
 	if !ok || !art.FAttach {
 		t.Fatal("need FAttach msg")
 	}
-	eng.showMessage(a, art, false)
+	eng.showMessage(a, art, false, false)
 	out := bytes.ToUpper(st.out.Bytes())
 	if !bytes.Contains(out, []byte("FILEATTACH")) {
 		t.Fatalf("MSGBAR missing FILEATTACH: %q", st.out.Bytes())
@@ -160,7 +161,7 @@ func TestAttachDownloadFromReader(t *testing.T) {
 	if !ok {
 		t.Fatal("no msg")
 	}
-	eng.showMessage(a, art, false)
+	eng.showMessage(a, art, false, false)
 	out := st.out.Bytes()
 	if !bytes.Contains(out, []byte("[F]iles")) {
 		t.Fatalf("no Files option: %q", out)
@@ -214,7 +215,7 @@ func TestShowMessageAttachUsesLanguageStrings(t *testing.T) {
 	if !ok || !art.FAttach {
 		t.Fatal("need FAttach msg")
 	}
-	eng.showMessage(a, art, false)
+	eng.showMessage(a, art, false, false)
 	out := st.out.Bytes()
 	if !bytes.Contains(out, []byte("Files attached")) {
 		t.Fatalf("RDMSG #10 want AttFiles2: %q", out)
@@ -264,7 +265,7 @@ func TestShowMessagePagesSoftCRBody(t *testing.T) {
 	if !ok {
 		t.Fatal("read")
 	}
-	eng.showMessage(a, art, true)
+	eng.showMessage(a, art, true, false)
 	out := st.out.String()
 	if !strings.Contains(out, "More") && !strings.Contains(out, "more") {
 		t.Fatalf("expected page pause for soft-CR body: %q", out)
@@ -306,5 +307,65 @@ func TestBuildQuoteLinesWrapsSoftCR(t *testing.T) {
 		if len(ln) > 78 {
 			t.Fatalf("overlong quote line %q (%d)", ln, len(ln))
 		}
+	}
+}
+
+func TestNewScanHomesHeader(t *testing.T) {
+	dir := t.TempDir()
+	a := jamArea(t, dir, "scan", "Hello")
+	st := &seqStream{in: []byte("S")}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	line := &cfgrec.LineCfg{
+		AnsiOn: true,
+		User:   cfgrec.User{Name: "Bob", Security: 100, Record: -1, ScreenLength: 24},
+	}
+	tio := term.New(st, g, line)
+	eng := &Engine{T: tio, G: g, Line: line}
+	eng.doReadMail(a, 1, true, false, false, true)
+	out := st.out.String()
+	if !strings.Contains(out, "\x1b[2J") || !strings.Contains(out, "\x1b[H") {
+		t.Fatalf("newscan should home the screen before the header: %q", out)
+	}
+	clr := strings.LastIndex(out, "\x1b[2J")
+	if clr < 0 || !strings.Contains(out[clr:], "Hello") {
+		t.Fatalf("header should be after clear: %q", out)
+	}
+}
+
+func TestPausedReadKeepsHeaderAfterMore(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "pin")
+	var body strings.Builder
+	for i := 0; i < 30; i++ {
+		body.WriteString(fmt.Sprintf("line %02d of the message body\r\n", i))
+	}
+	if _, err := mail.AppendMsg(base, mail.Article{
+		From: "Alice", To: "Bob", Subject: "Pinned", Body: body.String(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st := &seqStream{in: []byte("YYYYS")}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	line := &cfgrec.LineCfg{
+		AnsiOn: true,
+		User:   cfgrec.User{Name: "Bob", Security: 100, Record: -1, ScreenLength: 12},
+	}
+	tio := term.New(st, g, line)
+	tio.Length = 12
+	eng := &Engine{T: tio, G: g, Line: line}
+	a := cfgrec.MessageArea{AreaNum: 1, Name: "Pin", Attribute: 1 << 7, JAMBase: base}
+	art, ok := mail.ReadMsg(base, 1)
+	if !ok {
+		t.Fatal("read")
+	}
+	eng.showMessage(a, art, true, true)
+	out := st.out.String()
+	if !strings.Contains(out, "\x1b[J") {
+		t.Fatalf("expected erase-below-header after More: %q", out)
+	}
+	if !strings.Contains(out, "Pinned") && !strings.Contains(out, "Alice") {
+		t.Fatalf("header missing: %q", out)
 	}
 }

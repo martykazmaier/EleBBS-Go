@@ -265,7 +265,7 @@ func (e *Engine) doReadMail(a cfgrec.MessageArea, start int, forward, individual
 			}
 			continue
 		}
-		act := e.showMessage(a, art, pause)
+		act := e.showMessage(a, art, pause, newScan)
 		mail.SetLastRead(a.JAMBase, e.Line.User.Name, e.Line.User.Handle, art.Num)
 		switch act {
 		case mailAgain:
@@ -329,16 +329,16 @@ func combinedScanNotice(e *Engine, a cfgrec.MessageArea) bool {
 	return false
 }
 
-func (e *Engine) showMessage(a cfgrec.MessageArea, art mail.Article, pause bool) int {
+func (e *Engine) showMessage(a cfgrec.MessageArea, art mail.Article, pause, newScan bool) int {
 	saveMore := e.T.MorePrompt
 	saveDisp := e.Line.DispMorePrompt
-	e.T.MorePrompt = pause
-	e.Line.DispMorePrompt = pause
+	e.T.MorePrompt = false
+	e.Line.DispMorePrompt = false
 	e.T.StopMore = false
 	e.T.ResetLines(1)
-	if pause {
-		// Pascal ClearTheScreen(True) before RDMSGPS: the template is
-		// drawn with "|" from the current row; Cursor X Y then fills fields.
+	// Pascal Write('`S:') before RDMSGPS when pausing. Newscan always
+	// homes so the header is not left under "Scanning" / the last msgbar.
+	if pause || newScan {
 		e.T.ClearScreen()
 		e.T.GotoXY(1, 1)
 	}
@@ -397,18 +397,53 @@ func (e *Engine) showMessage(a cfgrec.MessageArea, art mail.Article, pause bool)
 		e.T.Println("")
 		e.T.Println("")
 	}
-	// Pascal GetString(79) after the header: count rows already used so
-	// -- More -- fires for the rest of the screen, not a full Length of body.
-	if pause {
-		if y := e.T.WhereY(); y > 1 {
-			e.T.ResetLines(y - 1)
+	startY := e.T.WhereY()
+	if startY < 1 {
+		startY = 1
+	}
+	full := pause && e.Line != nil && (e.Line.AnsiOn || e.Line.AvatarOn)
+	if pause && !full {
+		if startY > 1 {
+			e.T.ResetLines(startY - 1)
 		}
 		e.T.MorePrompt = true
 		e.Line.DispMorePrompt = true
 		e.T.StopMore = false
 	}
-	for _, ln := range mail.WrapLines(art.Body, 79) {
-		e.showMsgLine(ln)
+	if full {
+		e.T.MorePrompt = false
+		e.Line.DispMorePrompt = false
+		page := e.T.Length - startY - 1
+		if page < 1 {
+			page = 1
+		}
+		shown := 0
+		for _, ln := range mail.WrapLines(art.Body, 79) {
+			if e.T.StopMore {
+				break
+			}
+			if shown >= page {
+				e.T.MorePrompt = true
+				e.Line.DispMorePrompt = true
+				ok := e.T.AskMore()
+				e.T.MorePrompt = false
+				e.Line.DispMorePrompt = false
+				if !ok {
+					break
+				}
+				e.T.EraseBelowRow(startY)
+				shown = 0
+			}
+			e.showMsgLine(ln)
+			shown++
+		}
+	} else {
+		for _, ln := range mail.WrapLines(art.Body, 79) {
+			if e.T.StopMore {
+				break
+			}
+			e.showMsgLine(ln)
+		}
 	}
 	return e.msgBar(a, art)
 }

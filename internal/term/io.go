@@ -268,7 +268,9 @@ func raduCoord(arg string, cur int) int {
 	return n
 }
 
-// setX is Pascal MakeXYStr: column 1 is CR on this line; otherwise relative CSI C/D.
+// setX is Pascal MakeXYStr: column 1 is CR on this line.
+// ANSI uses absolute CUP so MA-CHNG `X20` + `D32,40:` still wipes the list
+// after DisplayHotFile / lightbar leave WhereX desynced from the terminal.
 func (t *IO) setX(n int) {
 	if n < 1 {
 		n = 1
@@ -277,18 +279,16 @@ func (t *IO) setX(n int) {
 		_ = t.WriteRaw([]byte{'\r'})
 		return
 	}
+	ansi := t.Line == nil || t.Line.AnsiOn
+	if ansi {
+		t.GotoXY(n, t.WhereY())
+		return
+	}
 	cur := t.WhereX()
 	if n == cur {
 		return
 	}
-	ansi := t.Line == nil || t.Line.AnsiOn
-	if ansi {
-		if n < cur {
-			_ = t.WriteRaw([]byte(fmt.Sprintf("\x1b[%dD", cur-n)))
-		} else {
-			_ = t.WriteRaw([]byte(fmt.Sprintf("\x1b[%dC", n-cur)))
-		}
-	} else if n < cur {
+	if n < cur {
 		_ = t.WriteRaw(bytes.Repeat([]byte{8}, cur-n))
 	} else {
 		_ = t.WriteRaw(bytes.Repeat([]byte{' '}, n-cur))
@@ -446,6 +446,11 @@ func (t *IO) checkMore() {
 		return
 	}
 	t.Lines = 0
+	t.AskMore()
+}
+
+// AskMore is Pascal OutputObj.AskMore. false means the user stopped paging.
+func (t *IO) AskMore() bool {
 	prompt := "-- More --"
 	keys := "YN="
 	if t.Ral != nil && t.Ral.Entries() > 0 {
@@ -462,17 +467,33 @@ func (t *IO) checkMore() {
 	t.WriteRaw([]byte("\r          \r"))
 	up := pascal.UpCase(string(ch))
 	if up == "" {
-		return
+		return true
 	}
 	c := up[0]
 	if strings.ContainsRune(keys, 'N') && (c == 'N' || c == 'S') {
 		t.StopMore = true
-		return
+		return false
 	}
 	if strings.ContainsRune(keys, '=') && c == '=' {
 		t.StopMore = true
-		t.Line.DispMorePrompt = false
+		if t.Line != nil {
+			t.Line.DispMorePrompt = false
+		}
+		return false
 	}
+	return true
+}
+
+// EraseBelowRow is Pascal ClearTheScreen(False): keep rows above row, wipe the rest.
+func (t *IO) EraseBelowRow(row int) {
+	if row < 1 {
+		row = 1
+	}
+	t.GotoXY(1, row)
+	if t.Line == nil || t.Line.AnsiOn || t.Line.AvatarOn {
+		t.WriteRaw([]byte("\x1b[J"))
+	}
+	t.Lines = 0
 }
 
 func (t *IO) ClearScreen() {
@@ -483,6 +504,7 @@ func (t *IO) ClearScreen() {
 		t.WriteRaw([]byte("\x1b[2J\x1b[H"))
 	}
 	t.Lines = 0
+	t.CurX, t.CurY = 1, 1
 }
 
 func (t *IO) GetKey(timeout time.Duration) (byte, error) {
@@ -1570,6 +1592,25 @@ func (t *IO) handleCode(code byte, arg string) {
 		t.setColor(bg | byte(n&0x0F))
 	case 'C', 'c': // RADU blink
 		t.setColor(t.Attr | 0x80)
+	case 'D', 'd': // RADU duplicate: `D32,40:` is chr(32) × 40 (Pascal AvatarDupl)
+		ch, times := 32, 1
+		if i := strings.IndexByte(arg, ','); i >= 0 {
+			fmt.Sscanf(arg[:i], "%d", &ch)
+			fmt.Sscanf(arg[i+1:], "%d", &times)
+		} else {
+			fmt.Sscanf(arg, "%d", &times)
+		}
+		if times < 0 {
+			times = 0
+		}
+		if times > 255 {
+			times = 255
+		}
+		rep := byte(ch)
+		// Always emit the repeated bytes. Pascal AvatarDupl sends ^V^Y when
+		// AvatarOn, but ANSI SyncTERM ignores that and never wipes the
+		// MA-CHNG list on `?`. Spaces work for ANSI and Avatar.
+		t.WriteRaw(bytes.Repeat([]byte{rep}, times))
 	case 'E', 'e':
 		t.WriteRaw([]byte("\x1b[K"))
 	case 'G', 'g':

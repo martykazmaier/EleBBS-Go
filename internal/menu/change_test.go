@@ -1,6 +1,7 @@
 package menu
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
@@ -260,6 +261,64 @@ func TestChangerQExitsLikeEscape(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("MA-CHNG did not exit on Q (should remap to Escape)")
+	}
+}
+
+func TestChangerHelpWipesListWithRaduD(t *testing.T) {
+	src := `\\bbs\ele\question\MA-CHNG.Q-A`
+	body, err := os.ReadFile(src)
+	if err != nil {
+		body, err = os.ReadFile(`C:\Users\Owner\OneDrive\ele\QUESTION\MA-CHNG.Q-A`)
+	}
+	if err != nil {
+		t.Skip(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ma-chng.q-a"), body, 0644); err != nil {
+		t.Fatal(err)
+	}
+	all := make([]cfgrec.MessageArea, 8)
+	for i := range all {
+		all[i] = cfgrec.MessageArea{AreaNum: uint16(i + 1), Name: "Area" + strconv.Itoa(i+1)}
+	}
+	u := cfgrec.User{Security: 100, Attribute: cfgrec.UserANSI, Name: "Sysop"}
+	hook := func(recordNum, start int, down bool, put func(int, string)) {
+		msgGetInfo(all, u, false, 0, false, recordNum, start, down, put)
+	}
+	g := &cfgrec.GlobalCfg{}
+	g.RaConfig.SysPath = dir
+	g.RaConfig.TextPath = dir
+	g.RaConfig.LogFileName = filepath.Join(dir, "elebbs.log")
+	line := &cfgrec.LineCfg{AnsiOn: true, User: u}
+	line.Language.QuesPath = dir
+	line.Language.TextPath = dir
+	st := &seqStream{in: []byte{'?', ' ', 'q'}}
+	tio := term.New(st, g, line)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = quest.Exec(tio, g, line, "MA-CHNG /N", quest.ScriptOpts{
+			NoLog: true,
+			Answers: map[int]string{
+				1: "8",
+				2: "1",
+				3: "1",
+			},
+			GetInfo: hook,
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("MA-CHNG hung on ? help")
+	}
+	out := st.out.Bytes()
+	wipe := bytes.Repeat([]byte{' '}, 40)
+	if n := bytes.Count(out, wipe); n < 16 {
+		t.Fatalf("? help should wipe 16 rows with `D32,40:`, got %d: %q", n, out)
+	}
+	if !bytes.Contains(out, []byte("EleChanger Help")) {
+		t.Fatalf("help text missing: %q", out)
 	}
 }
 

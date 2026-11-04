@@ -166,7 +166,7 @@ func (e *Engine) readMailboxHits(hits []mail.MailHit) {
 			i++
 			continue
 		}
-		act := e.showMessage(h.Area, art, pause)
+		act := e.showMessage(h.Area, art, pause, false)
 		mail.SetLastRead(h.Area.JAMBase, e.Line.User.Name, e.Line.User.Handle, art.Num)
 		mail.SetReceived(h.Area.JAMBase, art.Num)
 		switch act {
