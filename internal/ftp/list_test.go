@@ -37,7 +37,7 @@ func TestFTPListAndRetrUseLongFileName(t *testing.T) {
 	if err := os.WriteFile(files.FDBPath(g, "hdr", 4), cfgrec.EncodeFilesHdr(h), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ss := &session{srv: &Server{cfg: Config{G: g}, areas: []cfgrec.FilesArea{area}}, area: 4}
+	ss := &session{srv: &Server{cfg: Config{G: g}, areas: []cfgrec.FilesArea{area}}, group: 1, area: 4}
 	shown := files.ConvDirName(files.LongName(g, area, h))
 	if shown != files.ConvDirName(lfn) {
 		t.Fatalf("list name %q want LFN, not 8.3 %q", shown, h.Name)

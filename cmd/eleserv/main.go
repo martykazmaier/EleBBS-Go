@@ -61,7 +61,7 @@ func main() {
 		start("FTPS", func() error {
 			return ftp.Listen(ftp.Config{
 				G: g, Port: opt.FTPPort, Limit: opt.FTPLimit, Anonymous: opt.Anonymous,
-				PasvIP: opt.PasvIP, PasvLo: opt.PasvLo, PasvHi: opt.PasvHi, PasvOffset: opt.PasvOffset,
+				PasvIP: opt.PasvIP, PasvDyn: opt.PasvDyn, PasvLo: opt.PasvLo, PasvHi: opt.PasvHi, PasvOffset: opt.PasvOffset,
 				IndexName: opt.FTPIndex, XferLog: opt.TransferLog, TLS: cfg,
 			})
 		})

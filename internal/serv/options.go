@@ -2,10 +2,15 @@ package serv
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
+	"net"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 type Options struct {
@@ -26,6 +31,7 @@ type Options struct {
 	FTPLimit    int
 	FTPNode     int
 	PasvIP      string
+	PasvDyn     string
 	PasvLo      int
 	PasvHi      int
 	PasvOffset  int
@@ -94,6 +100,8 @@ func Parse(args []string) Options {
 			o.FTPNode = atoi(strip(a, "FTPNODE:"))
 		case strings.HasPrefix(key, "PASVSRVIP:"):
 			o.PasvIP = strip(a, "PASVSRVIP:")
+		case strings.HasPrefix(key, "PASVDYNIP:"):
+			o.PasvDyn = strip(a, "PASVDYNIP:")
 		case strings.HasPrefix(key, "PASVPORTS:"):
 			rng := strip(a, "PASVPORTS:")
 			if i := strings.IndexByte(rng, '-'); i >= 0 {
@@ -153,6 +161,7 @@ func HelpText(pid string) string {
 		"-FTPLIMIT:<x>      - Maximum FTPS sessions\n" +
 		"-FTPNODE:<x>       - Starting node number for FTPS sessions\n" +
 		"-PASVSRVIP:<addr>  - Reported IP for PASV data connections\n" +
+		"-PASVDYNIP:<file>  - PASV IPv4 file, or a hostname (looked up like ping)\n" +
 		"-PASVPORTS:<x-y>   - Passive data port range\n" +
 		"-PASVOFFSET:<x>    - Add x to the reported PASV port\n" +
 		"-FTPXLOG:<file>    - Transfer summary log\n" +
@@ -195,4 +204,113 @@ func FormatPasv(ip string, port int) string {
 	p1 := port / 256
 	p2 := port % 256
 	return fmt.Sprintf("(%s,%s,%s,%s,%d,%d)", parts[0], parts[1], parts[2], parts[3], p1, p2)
+}
+
+func ipv4Host(host string) string {
+	host = strings.Trim(host, "[]")
+	if ip := net.ParseIP(host); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			return v4.String()
+		}
+	}
+	return host
+}
+
+// PasvAdvertisedIP is Pascal cmdPasv: use -PASVSRVIP unless it is unset or the
+// control socket is loopback. Private clients keep the LAN address so PASV
+// still works inside NAT without hairpin.
+func PasvAdvertisedIP(local, client, pasvSrv string) string {
+	local = ipv4Host(local)
+	client = ipv4Host(client)
+	pasvSrv = ipv4Host(pasvSrv)
+	if pasvSrv == "" || pasvSrv == "0.0.0.0" || strings.HasPrefix(local, "127.") {
+		return local
+	}
+	if ip := net.ParseIP(client); ip != nil && ip.IsPrivate() {
+		return local
+	}
+	return pasvSrv
+}
+
+var (
+	dynLookMu sync.Mutex
+	dynLookIP string
+	dynLookAt time.Time
+	dynLookH  string
+)
+
+// ReadPasvDynIP is Pascal ftp_DynIp (one-line IPv4 file). A hostname is
+// resolved with the Windows DNS client, the same lookup ping uses; ICMP is not sent.
+func ReadPasvDynIP(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if ip := parseIPv4(path); ip != "" {
+		return ip
+	}
+	if strings.ContainsAny(path, `/\`) {
+		return readPasvIPFile(path)
+	}
+	if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+		return readPasvIPFile(path)
+	}
+	return lookupPasvIPv4(path)
+}
+
+func readPasvIPFile(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(b))
+	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	return parseIPv4(line)
+}
+
+func lookupPasvIPv4(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	dynLookMu.Lock()
+	defer dynLookMu.Unlock()
+	if dynLookH == host && dynLookIP != "" && time.Since(dynLookAt) < 5*time.Minute {
+		return dynLookIP
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+	if err != nil {
+		return dynLookIP
+	}
+	var first string
+	for _, ip := range ips {
+		v4 := ip.To4()
+		if v4 == nil {
+			continue
+		}
+		s := v4.String()
+		if first == "" {
+			first = s
+		}
+		if !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
+			dynLookH, dynLookIP, dynLookAt = host, s, time.Now()
+			return s
+		}
+	}
+	if first != "" {
+		dynLookH, dynLookIP, dynLookAt = host, first, time.Now()
+	}
+	return first
+}
+
+func parseIPv4(s string) string {
+	ip := net.ParseIP(ipv4Host(strings.TrimSpace(s)))
+	if ip == nil || ip.To4() == nil {
+		return ""
+	}
+	return ip.To4().String()
 }

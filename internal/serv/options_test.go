@@ -1,6 +1,10 @@
 package serv
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseCertFlags(t *testing.T) {
 	o := Parse([]string{"-FTPS", `-CERT:C:\bbs\fullchain.pem`, `-KEY:C:\bbs\privkey.pem`})
@@ -47,6 +51,46 @@ func TestParseTelnetSAndWSS(t *testing.T) {
 	o = Parse([]string{"-WSSPORT:8443", "-TELNETSPORT:2323"})
 	if !o.WSS || o.WSSPort != 8443 || !o.TelnetS || o.TelnetSPort != 2323 {
 		t.Fatalf("%+v", o)
+	}
+}
+
+func TestParsePasvDynIPWindowsPath(t *testing.T) {
+	o := Parse([]string{`-PASVDYNIP:C:\ele\wanip.txt`})
+	if o.PasvDyn != `C:\ele\wanip.txt` {
+		t.Fatalf("PASVDYNIP %q", o.PasvDyn)
+	}
+}
+
+func TestReadPasvDynIP(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "wanip.txt")
+	if err := os.WriteFile(p, []byte(" 174.27.157.148 \r\ncomment\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ReadPasvDynIP(p); got != "174.27.157.148" {
+		t.Fatalf("got %q", got)
+	}
+	if got := ReadPasvDynIP(filepath.Join(t.TempDir(), "missing.txt")); got != "" {
+		t.Fatalf("missing %q", got)
+	}
+	if got := ReadPasvDynIP("127.0.0.1"); got != "127.0.0.1" {
+		t.Fatalf("literal %q", got)
+	}
+}
+
+func TestPasvAdvertisedIP(t *testing.T) {
+	lan := "192.168.0.3"
+	wan := "174.27.157.148"
+	if got := PasvAdvertisedIP(lan, "10.2.0.2", ""); got != lan {
+		t.Fatalf("no PASVSRVIP: %s", got)
+	}
+	if got := PasvAdvertisedIP(lan, "8.8.8.8", wan); got != wan {
+		t.Fatalf("internet client: %s", got)
+	}
+	if got := PasvAdvertisedIP(lan, "192.168.0.10", wan); got != lan {
+		t.Fatalf("LAN client: %s", got)
+	}
+	if got := PasvAdvertisedIP("127.0.0.1", "8.8.8.8", wan); got != "127.0.0.1" {
+		t.Fatalf("loopback: %s", got)
 	}
 }
 

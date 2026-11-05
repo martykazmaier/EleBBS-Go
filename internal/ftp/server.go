@@ -27,6 +27,7 @@ type Config struct {
 	Limit      int
 	Anonymous  bool
 	PasvIP     string
+	PasvDyn    string
 	PasvLo     int
 	PasvHi     int
 	PasvOffset int
@@ -177,6 +178,10 @@ func (ss *session) dispatch(cmd, arg string) bool {
 		if ss.needAuth() {
 			ss.cmdPasv()
 		}
+	case "EPSV":
+		if ss.needAuth() {
+			ss.cmdEpsv()
+		}
 	case "PORT":
 		if ss.needAuth() {
 			ss.cmdPort(arg)
@@ -223,6 +228,7 @@ func (ss *session) dispatch(cmd, arg string) bool {
 	case "FEAT":
 		_ = serv.WriteLine(ss.c, "211-Features:")
 		_ = serv.WriteLine(ss.c, " PASV")
+		_ = serv.WriteLine(ss.c, " EPSV")
 		_ = serv.WriteLine(ss.c, " SIZE")
 		_ = serv.WriteLine(ss.c, " MDTM")
 		_ = serv.WriteLine(ss.c, " REST STREAM")
@@ -320,77 +326,65 @@ func (ss *session) cmdCwd(arg string) {
 		ss.dispatch("CDUP", "")
 		return
 	}
-	arg = strings.ReplaceAll(arg, `\`, "/")
-	parts := splitPath(arg)
-	group, area := ss.group, ss.area
-	abs := strings.HasPrefix(arg, "/")
-	if abs {
-		group, area = -1, -1
-		parts = splitPath(strings.TrimPrefix(arg, "/"))
+	listGroup, listArea := ss.group, ss.area
+	g, a, _, invalid := ss.partsFromDir(arg, listGroup, listArea)
+	if invalid {
+		ss.reply(550, "Requested action not taken: file unavailable.")
+		return
 	}
-	for _, p := range parts {
-		if p == "" || p == "." {
-			continue
-		}
-		if p == ".." {
-			if area > 0 {
-				area = -1
-			} else {
-				group = -1
-			}
-			continue
-		}
-		if group < 0 {
-			g, ok := files.FindGroupDir(ss.srv.grps, p)
-			if !ok || !files.GroupAccess(g, ss.user) {
-				ss.reply(550, "Directory not found")
-				return
-			}
-			group = int(g.AreaNum)
-			area = -1
-			continue
-		}
-		a, ok := files.FindAreaDir(ss.srv.areas, p)
-		if !ok || !files.CheckFileAreaAccess(a, ss.user, false, true, false, true, uint16(group)) {
-			ss.reply(550, "Directory not found")
-			return
-		}
-		area = int(a.AreaNum)
-	}
-	ss.group, ss.area = group, area
+	ss.group, ss.area = g, a
 	ss.reply(250, fmt.Sprintf("Changed directory to \"%s\"", ss.pwd()))
 }
 
-func (ss *session) cmdPasv() {
+func (ss *session) listenPasv() (int, bool) {
 	ss.closePasv()
-	addr := fmt.Sprintf(":%d", 0)
-	if ss.srv.cfg.PasvLo > 0 && ss.srv.cfg.PasvHi >= ss.srv.cfg.PasvLo {
-		// try a handful of ports in range
-		for i := 0; i < 16; i++ {
-			p := ss.srv.cfg.PasvLo + (int(time.Now().UnixNano())+i)%(ss.srv.cfg.PasvHi-ss.srv.cfg.PasvLo+1)
-			ln, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
-			if err == nil {
-				ss.pasvLn = ln
-				break
-			}
+	lo, hi := ss.srv.cfg.PasvLo, ss.srv.cfg.PasvHi
+	if lo <= 0 {
+		lo = 1025
+	}
+	if hi < lo {
+		hi = 65535
+	}
+	span := hi - lo + 1
+	for i := 0; i < 3; i++ {
+		p := pickPasvPort(lo, span, time.Now().UnixNano(), i)
+		ln, err := net.Listen("tcp", fmt.Sprintf(":%d", p))
+		if err == nil {
+			ss.pasvLn = ln
+			break
 		}
 	}
 	if ss.pasvLn == nil {
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			ss.reply(425, "Can't open data connection")
-			return
-		}
-		ss.pasvLn = ln
+		ss.reply(425, "Can't open data connection")
+		return 0, false
 	}
 	_, portStr, _ := net.SplitHostPort(ss.pasvLn.Addr().String())
-	port := servAtoi(portStr) + ss.srv.cfg.PasvOffset
-	ip := ss.srv.cfg.PasvIP
-	if ip == "" {
-		ip, _, _ = net.SplitHostPort(ss.c.LocalAddr().String())
+	return servAtoi(portStr) + ss.srv.cfg.PasvOffset, true
+}
+
+func (ss *session) cmdPasv() {
+	port, ok := ss.listenPasv()
+	if !ok {
+		return
 	}
+	local, _, _ := net.SplitHostPort(ss.c.LocalAddr().String())
+	client, _, _ := net.SplitHostPort(ss.c.RemoteAddr().String())
+	pasvIP := ss.srv.cfg.PasvIP
+	if dyn := serv.ReadPasvDynIP(ss.srv.cfg.PasvDyn); dyn != "" {
+		pasvIP = dyn
+	}
+	ip := serv.PasvAdvertisedIP(local, client, pasvIP)
 	ss.portDst = ""
 	ss.reply(227, "Entering Passive Mode "+serv.FormatPasv(ip, port))
+}
+
+func (ss *session) cmdEpsv() {
+	port, ok := ss.listenPasv()
+	if !ok {
+		return
+	}
+	ss.portDst = ""
+	ss.reply(229, fmt.Sprintf("Entering Extended Passive Mode (|||%d|)", port))
 }
 
 func (ss *session) cmdPort(arg string) {
@@ -455,69 +449,18 @@ func (ss *session) cmdList(arg string, nlst bool) {
 	}
 	defer dc.Close()
 	group, area := ss.group, ss.area
-	wild := "*"
-	arg = strings.TrimSpace(arg)
-	if arg != "" && !strings.HasPrefix(arg, "-") {
-		// list a path or wildcard in current dir
-		if strings.ContainsAny(arg, "/*") {
-			wild = filepath.Base(arg)
-		} else if ss.area > 0 {
-			wild = arg
-		} else if ss.group > 0 {
-			if a, ok := files.FindAreaDir(ss.srv.areas, arg); ok {
-				area = int(a.AreaNum)
-			} else {
-				wild = arg
-			}
-		} else {
-			if g, ok := files.FindGroupDir(ss.srv.grps, arg); ok {
-				group = int(g.AreaNum)
-			} else {
-				wild = arg
-			}
-		}
+	wild := ""
+	arg = ftpListArg(arg)
+	if arg != "" {
+		g, a, w, _ := ss.partsFromDir(arg, group, area)
+		group, area, wild = g, a, w
+	}
+	if wild == "" {
+		wild = "*"
 	}
 	now := time.Now().Format("Jan 02  2006")
 	write := func(s string) { _, _ = io.WriteString(dc, s+"\r\n") }
-	if area > 0 {
-		a, ok := files.FindArea(ss.srv.areas, uint16(area))
-		if ok && files.CheckFileAreaAccess(a, ss.user, false, false, false, true, uint16(group)) {
-			if ss.srv.cfg.IndexName != "" {
-				write(listLine(true, 0, now, files.ConvDirName(ss.srv.cfg.IndexName), nlst))
-			}
-			ents, _ := files.ReadFDB(ss.srv.cfg.G, a)
-			for _, e := range ents {
-				if e.Hdr.Deleted() || e.Hdr.Unlisted() || e.Hdr.Comment() || e.Hdr.Missing() || e.Hdr.NotAvail() || e.Hdr.Password != "" {
-					continue
-				}
-				long := files.LongName(ss.srv.cfg.G, a, e.Hdr)
-				disp := files.ConvDirName(long)
-				if !files.MatchWild(wild, long) && !files.MatchWild(wild, e.Hdr.Name) && !files.MatchWild(wild, disp) {
-					continue
-				}
-				shown := disp
-				if nlst {
-					shown = long
-				}
-				dt := files.UnpackDOSTime(e.Hdr.FileDate)
-				ds := now
-				if !dt.IsZero() {
-					ds = dt.Format("Jan 02  2006")
-				}
-				write(listLine(true, int64(e.Hdr.Size), ds, shown, nlst))
-			}
-		}
-	} else if group > 0 {
-		for _, a := range ss.srv.areas {
-			if !files.CheckFileAreaAccess(a, ss.user, false, true, false, true, uint16(group)) {
-				continue
-			}
-			if !files.MatchWild(wild, files.ConvDirName(a.Name)) {
-				continue
-			}
-			write(listLine(false, 1024, now, files.ConvDirName(a.Name), nlst))
-		}
-	} else {
+	if area < 0 && group < 0 {
 		for _, g := range ss.srv.grps {
 			if !files.GroupAccess(g, ss.user) {
 				continue
@@ -527,15 +470,58 @@ func (ss *session) cmdList(arg string, nlst bool) {
 			}
 			write(listLine(false, 1024, now, files.ConvDirName(g.Name), nlst))
 		}
+	} else {
+		if area < 0 {
+			for _, ar := range ss.srv.areas {
+				if !files.CheckFileAreaAccess(ar, ss.user, false, true, false, true, uint16(group)) {
+					continue
+				}
+				if !files.MatchWild(wild, files.ConvDirName(ar.Name)) && !files.MatchWild(wild, ar.Name) {
+					continue
+				}
+				write(listLine(false, 1024, now, files.ConvDirName(ar.Name), nlst))
+			}
+		}
+		if area > 0 && group > 0 {
+			a, ok := files.FindArea(ss.srv.areas, uint16(area))
+			if ok && files.CheckFileAreaAccess(a, ss.user, false, false, false, true, uint16(group)) {
+				if ss.srv.cfg.IndexName != "" {
+					write(listLine(true, 0, now, files.ConvDirName(ss.srv.cfg.IndexName), nlst))
+				}
+				ents, _ := files.ReadFDB(ss.srv.cfg.G, a)
+				for _, e := range ents {
+					if e.Hdr.Deleted() || e.Hdr.Unlisted() || e.Hdr.Comment() || e.Hdr.Missing() || e.Hdr.NotAvail() || e.Hdr.Password != "" {
+						continue
+					}
+					long := files.LongName(ss.srv.cfg.G, a, e.Hdr)
+					disp := files.ConvDirName(long)
+					if !files.MatchWild(wild, long) && !files.MatchWild(wild, e.Hdr.Name) && !files.MatchWild(wild, disp) {
+						continue
+					}
+					shown := disp
+					if nlst {
+						shown = long
+					}
+					dt := files.UnpackDOSTime(e.Hdr.FileDate)
+					ds := now
+					if !dt.IsZero() {
+						ds = dt.Format("Jan 02  2006")
+					}
+					write(listLine(true, int64(e.Hdr.Size), ds, shown, nlst))
+				}
+			}
+		}
 	}
 	ss.reply(226, "Transfer complete")
 }
 
 func (ss *session) findFile(name string) (cfgrec.FilesArea, files.Entry, bool) {
-	if ss.area <= 0 {
+	name = strings.ReplaceAll(strings.TrimSpace(name), " ", "_")
+	_, areaNum, wild, invalid := ss.partsFromDir(name, ss.group, ss.area)
+	if invalid || areaNum <= 0 || wild == "" {
 		return cfgrec.FilesArea{}, files.Entry{}, false
 	}
-	a, ok := files.FindArea(ss.srv.areas, uint16(ss.area))
+	a, ok := files.FindArea(ss.srv.areas, uint16(areaNum))
 	if !ok {
 		return cfgrec.FilesArea{}, files.Entry{}, false
 	}
@@ -543,17 +529,20 @@ func (ss *session) findFile(name string) (cfgrec.FilesArea, files.Entry, bool) {
 	if err != nil {
 		return a, files.Entry{}, false
 	}
-	name = filepath.Base(name)
+	bjork := strings.ReplaceAll(wild, "_", "?")
 	for _, e := range ents {
 		if e.Hdr.Deleted() || e.Hdr.Comment() {
 			continue
 		}
 		long := files.LongName(ss.srv.cfg.G, a, e.Hdr)
-		if strings.EqualFold(e.Hdr.Name, name) ||
-			strings.EqualFold(files.ConvDirName(e.Hdr.Name), name) ||
-			strings.EqualFold(long, name) ||
-			strings.EqualFold(files.ConvDirName(long), name) {
-			return a, e, true
+		cands := []string{e.Hdr.Name, files.ConvDirName(e.Hdr.Name), long, files.ConvDirName(long)}
+		for _, cand := range cands {
+			if cand == "" {
+				continue
+			}
+			if strings.EqualFold(cand, wild) || files.MatchWild(wild, cand) || files.MatchWild(bjork, cand) {
+				return a, e, true
+			}
 		}
 	}
 	return a, files.Entry{}, false
@@ -724,7 +713,7 @@ func (ss *session) cmdDele(name string) {
 
 func (ss *session) cmdHelp() {
 	_ = serv.WriteLine(ss.c, "214-The following commands are recognized")
-	for _, c := range []string{"CWD", "DELE", "LIST", "MDTM", "NLST", "NOOP", "PASS", "PASV", "PORT", "PWD", "QUIT", "REST", "RETR", "SIZE", "STOR", "SYST", "TYPE", "USER"} {
+	for _, c := range []string{"CWD", "DELE", "EPSV", "LIST", "MDTM", "NLST", "NOOP", "PASS", "PASV", "PORT", "PWD", "QUIT", "REST", "RETR", "SIZE", "STOR", "SYST", "TYPE", "USER"} {
 		_ = serv.WriteLine(ss.c, "   "+c)
 	}
 	ss.reply(214, "HELP command successful")
@@ -769,3 +758,11 @@ func host(c net.Conn) string {
 func trim(s string) string { return strings.TrimSpace(s) }
 
 func servAtoi(s string) int { return serv.ParseInt(s) }
+
+// pickPasvPort stays in [lo, lo+span). UnixNano must not be narrowed to 32-bit int.
+func pickPasvPort(lo, span int, nano int64, i int) int {
+	if span <= 0 {
+		return lo
+	}
+	return lo + int((uint64(nano)+uint64(uint32(i)))%uint64(span))
+}
