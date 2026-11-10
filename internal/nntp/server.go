@@ -66,21 +66,6 @@ type session struct {
 	pending string
 	cur     mail.NewsGroup
 	curNum  int
-	ov      []mail.Article
-	ovBase  string
-}
-
-func (ss *session) overview() []mail.Article {
-	base := ss.cur.Area.JAMBase
-	if base == "" {
-		return nil
-	}
-	if ss.ovBase == base && ss.ov != nil {
-		return ss.ov
-	}
-	ss.ov = mail.Headers(base)
-	ss.ovBase = base
-	return ss.ov
 }
 
 func handle(cfg Config, ns cfgrec.NewsServer, groups []mail.NewsGroup, c net.Conn) {
@@ -217,7 +202,6 @@ func (ss *session) cmdGroup(name string) {
 		return
 	}
 	ss.cur = g
-	ss.ov, ss.ovBase = nil, ""
 	st := mail.Stats(g.Area.JAMBase)
 	ss.curNum = st.First
 	ss.line("211 %d %d %d %s", st.Active, st.First, st.High, g.Name)
@@ -243,10 +227,7 @@ func (ss *session) cmdArticle(kind, arg string) {
 	} else if byID {
 		group, found, match := ss.findArticleID(arg)
 		if match {
-			if group.Name != ss.cur.Name {
-				ss.cur = group
-				ss.ov, ss.ovBase = nil, ""
-			}
+			ss.cur = group
 			a, ok = found, true
 		}
 	} else {
@@ -281,21 +262,18 @@ func (ss *session) cmdArticle(kind, arg string) {
 
 func (ss *session) findArticleID(id string) (mail.NewsGroup, mail.Article, bool) {
 	id = strings.Trim(id, "<>")
-	if art, ok := mail.FindArticleID(ss.overview(), id); ok {
-		if body, ok := mail.ReadMsg(ss.cur.Area.JAMBase, art.Num); ok {
-			return ss.cur, body, true
-		}
-		return ss.cur, art, true
-	}
 	for _, group := range ss.groups {
-		if group.Name == ss.cur.Name {
-			continue
-		}
-		if art, ok := mail.FindArticleID(mail.Headers(group.Area.JAMBase), id); ok {
-			if body, ok := mail.ReadMsg(group.Area.JAMBase, art.Num); ok {
-				return group, body, true
+		var found mail.Article
+		ok := false
+		mail.Walk(group.Area.JAMBase, true, func(a mail.Article) bool {
+			if strings.EqualFold(strings.Trim(a.MsgID, "<>"), id) {
+				found, ok = a, true
+				return false
 			}
-			return group, art, true
+			return true
+		})
+		if ok {
+			return group, found, true
 		}
 	}
 	return mail.NewsGroup{}, mail.Article{}, false
@@ -370,14 +348,13 @@ func (ss *session) cmdXover(arg string) {
 		ss.line("%d %s", code, nntpStatus(code))
 		return
 	}
-	lo, hi := 0, 0
+	st := mail.Stats(ss.cur.Area.JAMBase)
+	lo, hi := st.First, st.High
 	if arg != "" {
 		if i := strings.IndexByte(arg, '-'); i >= 0 {
 			lo, _ = strconv.Atoi(arg[:i])
 			if rest := arg[i+1:]; rest != "" {
 				hi, _ = strconv.Atoi(rest)
-			} else {
-				hi = 1 << 30
 			}
 		} else {
 			lo, _ = strconv.Atoi(arg)
@@ -386,28 +363,15 @@ func (ss *session) cmdXover(arg string) {
 	}
 	ss.line("224 Overview information follows")
 	dom := ss.ns.DomainName
-	emit := func(a mail.Article) {
+	mail.Walk(ss.cur.Area.JAMBase, false, func(a mail.Article) bool {
+		if a.Num < lo || a.Num > hi {
+			return true
+		}
 		ss.line("%d\t%s\t%s\t%s\t<%s>\t%s\t%d\t%d",
 			a.Num, a.Subject, mail.HostEmail(a.From, dom), mail.NNTPDate(a.Date),
 			strings.Trim(a.MsgID, "<>"), "", a.Bytes, a.Lines)
-	}
-	if lo > 0 && lo == hi {
-		if a, ok := mail.ReadMsg(ss.cur.Area.JAMBase, lo); ok {
-			emit(a)
-		}
-		ss.line(".")
-		return
-	}
-	ov := ss.overview()
-	if lo == 0 && hi == 0 {
-		lo, hi = mail.HighLow(ov)
-	}
-	for _, a := range ov {
-		if a.Num < lo || a.Num > hi {
-			continue
-		}
-		emit(a)
-	}
+		return true
+	})
 	ss.line(".")
 }
 

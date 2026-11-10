@@ -45,83 +45,6 @@ func jamBaseMsg(base string) int32 {
 	return n
 }
 
-func jamActiveMsgs(base string) int32 {
-	f, err := jamOpenFile(base, ".jhd")
-	if err != nil {
-		return 0
-	}
-	defer f.Close()
-	var b [16]byte
-	if n, _ := f.Read(b[:]); n < 16 {
-		return 0
-	}
-	return int32(binary.LittleEndian.Uint32(b[12:]))
-}
-
-func jamFirstMsg(base string) int {
-	idx, err := jamOpenFile(base, ".jdx")
-	if err != nil {
-		return 0
-	}
-	defer idx.Close()
-	n := idxSlots(idx)
-	if n <= 0 {
-		return 0
-	}
-	baseNum := jamBaseMsg(base)
-	hdr, err := jamOpenFile(base, ".jhr")
-	if err != nil {
-		return int(baseNum)
-	}
-	defer hdr.Close()
-	buf := make([]byte, jamIdxChunk*jamIdxSize)
-	to := n
-	if to > jamHighScanMax {
-		to = jamHighScanMax
-	}
-	var h [jamMsgHdrSize]byte
-	for start := 0; start < to; {
-		chunk := jamIdxChunk
-		if chunk > to-start {
-			chunk = to - start
-		}
-		nb := chunk * jamIdxSize
-		nr, err := idx.ReadAt(buf[:nb], jamIdxOff(start))
-		if nr < jamIdxSize {
-			break
-		}
-		got := nr / jamIdxSize
-		for i := 0; i < got; i++ {
-			off := i * jamIdxSize
-			loc := int32(binary.LittleEndian.Uint32(buf[off+4:]))
-			if loc < 0 {
-				continue
-			}
-			if _, err := hdr.ReadAt(h[:], int64(loc)); err != nil {
-				continue
-			}
-			if string(h[:3]) != "JAM" {
-				continue
-			}
-			if binary.LittleEndian.Uint32(h[52:])&jamDeleted != 0 {
-				continue
-			}
-			num := int(binary.LittleEndian.Uint32(h[48:]))
-			if num <= 0 {
-				num = int(baseNum) + start + i
-			}
-			if num > 0 {
-				return num
-			}
-		}
-		start += got
-		if err != nil {
-			break
-		}
-	}
-	return 0
-}
-
 func idxSlots(idx *os.File) int {
 	st, err := idx.Stat()
 	if err != nil || st.Size() < jamIdxSize {
@@ -130,24 +53,57 @@ func idxSlots(idx *os.File) int {
 	return int(st.Size() / jamIdxSize)
 }
 
-// Stats is Pascal GetMsgAreaStats: ActiveMsgs from .jhd, first/high from the index.
+// Stats is Pascal GetMsgAreaStats for JAM: active, first, high — streamed.
 func Stats(base string) AreaStats {
-	high := int(jamHighMsg(base))
-	if high <= 0 {
+	idx, err := jamOpenFile(base, ".jdx")
+	if err != nil {
 		return AreaStats{}
 	}
-	first := jamFirstMsg(base)
-	if first <= 0 {
-		first = high
+	defer idx.Close()
+	n := idxSlots(idx)
+	if n == 0 {
+		return AreaStats{}
 	}
-	active := int(jamActiveMsgs(base))
-	if active <= 0 {
-		active = high - first + 1
-		if active < 1 {
-			active = 1
+	baseNum := jamBaseMsg(base)
+	hdr, err := jamOpenFile(base, ".jhr")
+	if err != nil {
+		return AreaStats{High: int(baseNum) + n - 1}
+	}
+	defer hdr.Close()
+	var rec [8]byte
+	st := AreaStats{}
+	for i := 0; i < n; i++ {
+		if _, err := idx.ReadAt(rec[:], jamIdxOff(i)); err != nil {
+			break
+		}
+		loc := int32(binary.LittleEndian.Uint32(rec[4:]))
+		if loc < 0 {
+			continue
+		}
+		var h [jamMsgHdrSize]byte
+		if _, err := hdr.ReadAt(h[:], int64(loc)); err != nil {
+			continue
+		}
+		if string(h[:3]) != "JAM" {
+			continue
+		}
+		attr := binary.LittleEndian.Uint32(h[52:])
+		if attr&jamDeleted != 0 {
+			continue
+		}
+		num := int(binary.LittleEndian.Uint32(h[48:]))
+		if num <= 0 {
+			num = int(baseNum) + i
+		}
+		st.Active++
+		if st.First == 0 || num < st.First {
+			st.First = num
+		}
+		if num > st.High {
+			st.High = num
 		}
 	}
-	return AreaStats{Active: active, First: first, High: high}
+	return st
 }
 
 // Walk visits each non-deleted JAM message. body reads that message's .jdt
@@ -175,35 +131,21 @@ func Walk(base string, body bool, fn func(Article) bool) {
 		}
 	}
 	baseNum := int(jamBaseMsg(base))
-	buf := make([]byte, jamIdxChunk*jamIdxSize)
-	for start := 0; start < n; {
-		chunk := jamIdxChunk
-		if chunk > n-start {
-			chunk = n - start
-		}
-		nb := chunk * jamIdxSize
-		nr, err := idx.ReadAt(buf[:nb], jamIdxOff(start))
-		if nr < jamIdxSize {
+	var rec [8]byte
+	for i := 0; i < n; i++ {
+		if _, err := idx.ReadAt(rec[:], jamIdxOff(i)); err != nil {
 			break
 		}
-		got := nr / jamIdxSize
-		for i := 0; i < got; i++ {
-			off := i * jamIdxSize
-			loc := int32(binary.LittleEndian.Uint32(buf[off+4:]))
-			if loc < 0 {
-				continue
-			}
-			a, ok := articleAt(hdr, txt, int64(loc), baseNum+start+i)
-			if !ok {
-				continue
-			}
-			if !fn(a) {
-				return
-			}
+		loc := int32(binary.LittleEndian.Uint32(rec[4:]))
+		if loc < 0 {
+			continue
 		}
-		start += got
-		if err != nil {
-			break
+		a, ok := articleAt(hdr, txt, int64(loc), baseNum+i)
+		if !ok {
+			continue
+		}
+		if !fn(a) {
+			return
 		}
 	}
 }
