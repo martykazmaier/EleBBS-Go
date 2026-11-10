@@ -106,6 +106,50 @@ func Stats(base string) AreaStats {
 	return st
 }
 
+// Walk visits each non-deleted JAM message. body reads that message's .jdt
+// slice only; it never maps the whole text file. Stop when fn returns false.
+func Walk(base string, body bool, fn func(Article) bool) {
+	idx, err := jamOpenFile(base, ".jdx")
+	if err != nil {
+		return
+	}
+	defer idx.Close()
+	n := idxSlots(idx)
+	if n == 0 {
+		return
+	}
+	hdr, err := jamOpenFile(base, ".jhr")
+	if err != nil {
+		return
+	}
+	defer hdr.Close()
+	var txt *os.File
+	if body {
+		txt, _ = jamOpenFile(base, ".jdt")
+		if txt != nil {
+			defer txt.Close()
+		}
+	}
+	baseNum := int(jamBaseMsg(base))
+	var rec [8]byte
+	for i := 0; i < n; i++ {
+		if _, err := idx.ReadAt(rec[:], jamIdxOff(i)); err != nil {
+			break
+		}
+		loc := int32(binary.LittleEndian.Uint32(rec[4:]))
+		if loc < 0 {
+			continue
+		}
+		a, ok := articleAt(hdr, txt, int64(loc), baseNum+i)
+		if !ok {
+			continue
+		}
+		if !fn(a) {
+			return
+		}
+	}
+}
+
 func LastRead(base, name, handle string) int {
 	return int(jamLastRead(base, name, handle))
 }
@@ -301,7 +345,11 @@ func articleAt(hdr, txt *os.File, loc int64, fallback int) (Article, bool) {
 	}
 	subLen := int(binary.LittleEndian.Uint32(h[8:]))
 	textOfs := int64(binary.LittleEndian.Uint32(h[60:]))
-	textLen := int(binary.LittleEndian.Uint32(h[64:]))
+	textLenU := binary.LittleEndian.Uint32(h[64:])
+	textLen := MaxMsgBytes
+	if textLenU < uint32(MaxMsgBytes) {
+		textLen = int(textLenU)
+	}
 	msgNum := int(binary.LittleEndian.Uint32(h[48:]))
 	dateUnix := int64(binary.LittleEndian.Uint32(h[36:]))
 	a := Article{
@@ -330,7 +378,13 @@ func articleAt(hdr, txt *os.File, loc int64, fallback int) (Article, bool) {
 			a.Body, a.Kludges = splitJamText(string(raw[:n]))
 		}
 	}
+	if a.MsgID == "" {
+		a.MsgID = fmt.Sprintf("%d@local", a.Num)
+	}
 	a.Bytes = len(a.Body)
+	if a.Bytes == 0 {
+		a.Bytes = textLen
+	}
 	a.Lines = countLines(a.Body)
 	return a, true
 }

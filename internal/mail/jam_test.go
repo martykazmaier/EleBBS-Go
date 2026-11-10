@@ -316,3 +316,35 @@ func TestNextActiveAfterAppendFindsEarlierUnread(t *testing.T) {
 		t.Fatalf("next subject %q want B", next.Subject)
 	}
 }
+
+func TestReadJAMHugeOffsetDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "bad")
+	hdr := make([]byte, jamBaseSize+jamMsgHdrSize)
+	copy(hdr[0:4], "JAM\x00")
+	h := hdr[jamBaseSize:]
+	copy(h[0:4], "JAM\x00")
+	binary.LittleEndian.PutUint16(h[4:], 1)
+	binary.LittleEndian.PutUint32(h[48:], 1)
+	binary.LittleEndian.PutUint32(h[60:], 0x7FFFFFFF)
+	binary.LittleEndian.PutUint32(h[64:], 100)
+	idx := make([]byte, jamIdxSize*2)
+	binary.LittleEndian.PutUint32(idx[4:], uint32(jamBaseSize))
+	binary.LittleEndian.PutUint32(idx[jamIdxSize+4:], 0x7FFFFFF0)
+	if err := os.WriteFile(base+".jdx", idx, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base+".jhr", hdr, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base+".jdt", []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	arts, err := ReadJAM(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arts) != 1 {
+		t.Fatalf("got %d articles", len(arts))
+	}
+}

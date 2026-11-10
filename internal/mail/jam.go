@@ -73,66 +73,11 @@ func openJam(base, ext string) ([]byte, error) {
 }
 
 func ReadJAM(base string) ([]Article, error) {
-	idx, err := openJam(base, ".jdx")
-	if err != nil {
-		return nil, err
-	}
-	hdr, err := openJam(base, ".jhr")
-	if err != nil {
-		return nil, err
-	}
-	txt, _ := openJam(base, ".jdt")
-	n := len(idx) / jamIdxSize
-	out := make([]Article, 0, n)
-	for i := 0; i < n; i++ {
-		loc := int32(binary.LittleEndian.Uint32(idx[i*jamIdxSize+4:]))
-		if loc < 0 || int(loc)+jamMsgHdrSize > len(hdr) {
-			continue
-		}
-		h := hdr[int(loc):]
-		if string(h[:3]) != "JAM" {
-			continue
-		}
-		attr := binary.LittleEndian.Uint32(h[52:])
-		if attr&jamDeleted != 0 {
-			continue
-		}
-		subLen := int(binary.LittleEndian.Uint32(h[8:]))
-		textOfs := int(binary.LittleEndian.Uint32(h[60:]))
-		textLen := int(binary.LittleEndian.Uint32(h[64:]))
-		msgNum := int(binary.LittleEndian.Uint32(h[48:]))
-		dateUnix := int64(binary.LittleEndian.Uint32(h[36:]))
-		a := Article{
-			Num:      msgNum,
-			Date:     time.Unix(dateUnix, 0).UTC(),
-			Received: attr&jamRcvd != 0,
-			Sent:     attr&jamSent != 0,
-			Private:  attr&jamPrivate != 0,
-			FAttach:  attr&jamFAttach != 0,
-			KillSent: attr&jamKillSent != 0,
-			Crash:    attr&jamCrash != 0,
-			Attr:     attr,
-		}
-		if a.Num == 0 {
-			a.Num = i + 1
-		}
-		if subLen > 0 && int(loc)+jamMsgHdrSize+subLen <= len(hdr) {
-			parseJamSubs(h[jamMsgHdrSize:jamMsgHdrSize+subLen], &a)
-		}
-		if textOfs >= 0 && textLen > 0 && textOfs+textLen <= len(txt) {
-			raw := string(txt[textOfs : textOfs+textLen])
-			a.Body, a.Kludges = splitJamText(raw)
-		}
-		if a.MsgID == "" {
-			a.MsgID = fmt.Sprintf("%d@local", a.Num)
-		}
-		a.Bytes = len(a.Body)
-		a.Lines = strings.Count(a.Body, "\n")
-		if a.Body != "" && !strings.HasSuffix(a.Body, "\n") {
-			a.Lines++
-		}
+	var out []Article
+	Walk(base, true, func(a Article) bool {
 		out = append(out, a)
-	}
+		return true
+	})
 	return out, nil
 }
 

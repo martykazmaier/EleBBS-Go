@@ -65,12 +65,16 @@ type session struct {
 	authed  bool
 	pending string
 	cur     mail.NewsGroup
-	arts    []mail.Article
 	curNum  int
 }
 
 func handle(cfg Config, ns cfgrec.NewsServer, groups []mail.NewsGroup, c net.Conn) {
-	defer c.Close()
+	defer func() {
+		if rec := recover(); rec != nil {
+			logx.Write(cfg.G, 0, '!', fmt.Sprintf("[NEWSSRV] panic: %v", rec))
+		}
+		_ = c.Close()
+	}()
 	_ = c.SetDeadline(time.Now().Add(10 * time.Minute))
 	ss := &session{cfg: cfg, ns: ns, groups: groups, c: c, r: bufio.NewReader(c)}
 	sys := cfg.G.RaConfig.SystemName
@@ -177,13 +181,12 @@ func (ss *session) cmdList(arg string) {
 	}
 	ss.line("215 List of newsgroups follow")
 	for _, g := range ss.groups {
-		arts, _ := mail.ReadJAM(g.Area.JAMBase)
-		lo, hi := mail.HighLow(arts)
+		st := mail.Stats(g.Area.JAMBase)
 		post := "n"
 		if g.Posting {
 			post = "y"
 		}
-		ss.line("%s %d %d %s", g.Name, hi, lo, post)
+		ss.line("%s %d %d %s", g.Name, st.High, st.First, post)
 	}
 	ss.line(".")
 }
@@ -198,14 +201,10 @@ func (ss *session) cmdGroup(name string) {
 		ss.line("%d %s", code, nntpStatus(code))
 		return
 	}
-	arts, err := mail.ReadJAM(g.Area.JAMBase)
-	if err != nil {
-		arts = nil
-	}
-	ss.cur, ss.arts = g, arts
-	lo, hi := mail.HighLow(arts)
-	ss.curNum = lo
-	ss.line("211 %d %d %d %s", len(arts), lo, hi, g.Name)
+	ss.cur = g
+	st := mail.Stats(g.Area.JAMBase)
+	ss.curNum = st.First
+	ss.line("211 %d %d %d %s", st.Active, st.First, st.High, g.Name)
 }
 
 func (ss *session) cmdArticle(kind, arg string) {
@@ -224,16 +223,16 @@ func (ss *session) cmdArticle(kind, arg string) {
 	var a mail.Article
 	var ok bool
 	if arg == "" {
-		a, ok = mail.FindArticle(ss.arts, ss.curNum)
+		a, ok = mail.ReadMsg(ss.cur.Area.JAMBase, ss.curNum)
 	} else if byID {
-		group, arts, found, match := ss.findArticleID(arg)
+		group, found, match := ss.findArticleID(arg)
 		if match {
-			ss.cur, ss.arts = group, arts
+			ss.cur = group
 			a, ok = found, true
 		}
 	} else {
 		n, _ := strconv.Atoi(arg)
-		a, ok = mail.FindArticle(ss.arts, n)
+		a, ok = mail.ReadMsg(ss.cur.Area.JAMBase, n)
 	}
 	if !ok {
 		ss.line("430 No such article")
@@ -261,17 +260,23 @@ func (ss *session) cmdArticle(kind, arg string) {
 	}
 }
 
-func (ss *session) findArticleID(id string) (mail.NewsGroup, []mail.Article, mail.Article, bool) {
+func (ss *session) findArticleID(id string) (mail.NewsGroup, mail.Article, bool) {
+	id = strings.Trim(id, "<>")
 	for _, group := range ss.groups {
-		arts := ss.arts
-		if group.Name != ss.cur.Name {
-			arts, _ = mail.ReadJAM(group.Area.JAMBase)
-		}
-		if article, ok := mail.FindArticleID(arts, id); ok {
-			return group, arts, article, true
+		var found mail.Article
+		ok := false
+		mail.Walk(group.Area.JAMBase, true, func(a mail.Article) bool {
+			if strings.EqualFold(strings.Trim(a.MsgID, "<>"), id) {
+				found, ok = a, true
+				return false
+			}
+			return true
+		})
+		if ok {
+			return group, found, true
 		}
 	}
-	return mail.NewsGroup{}, nil, mail.Article{}, false
+	return mail.NewsGroup{}, mail.Article{}, false
 }
 
 func (ss *session) writeHead(a mail.Article) {
@@ -286,7 +291,7 @@ func (ss *session) writeHead(a mail.Article) {
 	ss.line("Newsgroups: %s", ss.cur.Name)
 	ss.line("Subject: %s", a.Subject)
 	for _, k := range a.Kludges {
-		if strings.HasPrefix(strings.ToUpper(k), "RFC850-") {
+		if len(k) >= 7 && strings.EqualFold(k[:7], "RFC850-") {
 			ss.line("%s", k[7:])
 		}
 	}
@@ -311,17 +316,16 @@ func (ss *session) cmdMove(dir string) {
 	if dir == "LAST" {
 		step = -1
 	}
-	next := ss.curNum + step
-	a, ok := mail.FindArticle(ss.arts, next)
-	if !ok {
-		for _, art := range ss.arts {
-			if step > 0 && art.Num > ss.curNum && (!ok || art.Num < a.Num) {
-				a, ok = art, true
-			}
-			if step < 0 && art.Num < ss.curNum && (!ok || art.Num > a.Num) {
-				a, ok = art, true
-			}
-		}
+	from := ss.curNum + step
+	if from < 1 {
+		from = 1
+	}
+	a, ok := mail.NextActive(ss.cur.Area.JAMBase, from, step > 0)
+	if ok && step > 0 && a.Num < from {
+		ok = false
+	}
+	if ok && step < 0 && a.Num > ss.curNum {
+		ok = false
 	}
 	if !ok {
 		if dir == "LAST" {
@@ -344,7 +348,8 @@ func (ss *session) cmdXover(arg string) {
 		ss.line("%d %s", code, nntpStatus(code))
 		return
 	}
-	lo, hi := mail.HighLow(ss.arts)
+	st := mail.Stats(ss.cur.Area.JAMBase)
+	lo, hi := st.First, st.High
 	if arg != "" {
 		if i := strings.IndexByte(arg, '-'); i >= 0 {
 			lo, _ = strconv.Atoi(arg[:i])
@@ -358,14 +363,15 @@ func (ss *session) cmdXover(arg string) {
 	}
 	ss.line("224 Overview information follows")
 	dom := ss.ns.DomainName
-	for _, a := range ss.arts {
+	mail.Walk(ss.cur.Area.JAMBase, false, func(a mail.Article) bool {
 		if a.Num < lo || a.Num > hi {
-			continue
+			return true
 		}
 		ss.line("%d\t%s\t%s\t%s\t<%s>\t%s\t%d\t%d",
 			a.Num, a.Subject, mail.HostEmail(a.From, dom), mail.NNTPDate(a.Date),
 			strings.Trim(a.MsgID, "<>"), "", a.Bytes, a.Lines)
-	}
+		return true
+	})
 	ss.line(".")
 }
 
@@ -516,7 +522,6 @@ func (ss *session) cmdPost() {
 		return
 	}
 	ss.cur = group
-	ss.arts, _ = mail.ReadJAM(group.Area.JAMBase)
 	ss.curNum = num
 	ss.line("240 Article received OK: <%s>", msgID)
 }
