@@ -72,6 +72,10 @@ func openJam(base, ext string) ([]byte, error) {
 	return b, err
 }
 
+func jamInRange(off, n, total int64) bool {
+	return off >= 0 && n >= 0 && off <= total && n <= total-off
+}
+
 func ReadJAM(base string) ([]Article, error) {
 	var out []Article
 	Walk(base, true, func(a Article) bool {
@@ -79,6 +83,73 @@ func ReadJAM(base string) ([]Article, error) {
 		return true
 	})
 	return out, nil
+}
+
+// Headers reads JDX+JHR only (no .jdt), for NNTP XOVER / GROUP.
+func Headers(base string) []Article {
+	idx, err := openJam(base, ".jdx")
+	if err != nil {
+		return nil
+	}
+	hdr, err := openJam(base, ".jhr")
+	if err != nil {
+		return nil
+	}
+	n := len(idx) / jamIdxSize
+	if n > jamIdxSaneMax {
+		n = jamIdxSaneMax
+	}
+	out := make([]Article, 0, n)
+	hdrN := int64(len(hdr))
+	for i := 0; i < n; i++ {
+		locU := binary.LittleEndian.Uint32(idx[i*jamIdxSize+4:])
+		if locU&0x80000000 != 0 {
+			continue
+		}
+		loc := int64(locU)
+		if !jamInRange(loc, jamMsgHdrSize, hdrN) {
+			continue
+		}
+		h := hdr[loc : loc+jamMsgHdrSize]
+		if string(h[:3]) != "JAM" {
+			continue
+		}
+		attr := binary.LittleEndian.Uint32(h[52:])
+		if attr&jamDeleted != 0 {
+			continue
+		}
+		msgNum := int(binary.LittleEndian.Uint32(h[48:]))
+		dateUnix := int64(binary.LittleEndian.Uint32(h[36:]))
+		a := Article{
+			Num:      msgNum,
+			Date:     time.Unix(dateUnix, 0).UTC(),
+			Received: attr&jamRcvd != 0,
+			Sent:     attr&jamSent != 0,
+			Private:  attr&jamPrivate != 0,
+			FAttach:  attr&jamFAttach != 0,
+			KillSent: attr&jamKillSent != 0,
+			Crash:    attr&jamCrash != 0,
+			Attr:     attr,
+		}
+		if a.Num == 0 {
+			a.Num = i + 1
+		}
+		subLen := int64(binary.LittleEndian.Uint32(h[8:]))
+		if subLen > 0 && subLen <= jamSubMax && jamInRange(loc+jamMsgHdrSize, subLen, hdrN) {
+			parseJamSubs(hdr[loc+jamMsgHdrSize:loc+jamMsgHdrSize+subLen], &a)
+		}
+		textLenU := binary.LittleEndian.Uint32(h[64:])
+		if textLenU < uint32(MaxMsgBytes) {
+			a.Bytes = int(textLenU)
+		} else {
+			a.Bytes = MaxMsgBytes
+		}
+		if a.MsgID == "" {
+			a.MsgID = fmt.Sprintf("%d@local", a.Num)
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 const (

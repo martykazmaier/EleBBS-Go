@@ -291,6 +291,10 @@ func TestAppendAndReadMsg(t *testing.T) {
 	if LastRead(base, "Sysop", "") != num {
 		t.Fatalf("lastread %d", LastRead(base, "Sysop", ""))
 	}
+	hdrs := Headers(base)
+	if len(hdrs) != 1 || hdrs[0].Subject != "Hello" || hdrs[0].Body != "" {
+		t.Fatalf("headers %+v", hdrs)
+	}
 }
 
 func TestNextActiveAfterAppendFindsEarlierUnread(t *testing.T) {
