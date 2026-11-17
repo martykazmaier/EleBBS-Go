@@ -50,7 +50,51 @@ func idxSlots(idx *os.File) int {
 	if err != nil || st.Size() < jamIdxSize {
 		return 0
 	}
-	return int(st.Size() / jamIdxSize)
+	n := st.Size() / jamIdxSize
+	if n <= 0 {
+		return 0
+	}
+	const max = int(^uint(0) >> 1)
+	if n > int64(max) {
+		return max
+	}
+	return int(n)
+}
+
+func jamActiveMsgs(base string) int {
+	f, err := jamOpenFile(base, ".jhd")
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	var b [16]byte
+	if n, _ := f.Read(b[:]); n < 16 {
+		return 0
+	}
+	return int(binary.LittleEndian.Uint32(b[12:]))
+}
+
+// NNTPStats is Pascal SelectGroup: ActiveMsgs, BaseMsgNum, GetHighMsgNum
+// (BaseMsgNum + index slots - 1). It does not scan headers.
+func NNTPStats(base string) AreaStats {
+	idx, err := jamOpenFile(base, ".jdx")
+	if err != nil {
+		return AreaStats{}
+	}
+	defer idx.Close()
+	n := idxSlots(idx)
+	if n <= 0 {
+		return AreaStats{}
+	}
+	baseNum := int(jamBaseMsg(base))
+	if baseNum < 1 {
+		baseNum = 1
+	}
+	active := jamActiveMsgs(base)
+	if active <= 0 {
+		active = n
+	}
+	return AreaStats{Active: active, First: baseNum, High: baseNum + n - 1}
 }
 
 // Stats is Pascal GetMsgAreaStats for JAM: active, first, high — streamed.
@@ -144,6 +188,7 @@ func Walk(base string, body bool, fn func(Article) bool) {
 		if !ok {
 			continue
 		}
+		a.Slot = baseNum + i
 		if !fn(a) {
 			return
 		}

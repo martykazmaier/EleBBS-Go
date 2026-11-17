@@ -32,6 +32,7 @@ const (
 
 type Article struct {
 	Num      int
+	Slot     int // JAM index number (BaseMsgNum+slot), Pascal SeekFirst
 	From     string
 	To       string
 	Subject  string
@@ -483,6 +484,27 @@ func FindArticleID(arts []Article, id string) (Article, bool) {
 		}
 	}
 	return Article{}, false
+}
+
+// FindByMsgID loads one message by Message-ID from a single JAM base.
+func FindByMsgID(base, id string) (Article, bool) {
+	id = strings.Trim(id, "<>")
+	if id == "" || strings.TrimSpace(base) == "" {
+		return Article{}, false
+	}
+	var num int
+	found := false
+	Walk(base, false, func(a Article) bool {
+		if strings.EqualFold(strings.Trim(a.MsgID, "<>"), id) {
+			num, found = a.Num, true
+			return false
+		}
+		return true
+	})
+	if !found {
+		return Article{}, false
+	}
+	return ReadMsg(base, num)
 }
 
 func HighLow(arts []Article) (first, last int) {

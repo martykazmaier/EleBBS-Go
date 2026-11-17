@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -84,6 +85,65 @@ func TestNNTPSOverviewCommands(t *testing.T) {
 				t.Fatalf("overview terminator %q", terminator)
 			}
 		})
+	}
+}
+
+func TestNNTPXoverListsEchoHeaderAndSlotRange(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "echo")
+	num, err := mail.AppendMsg(base, mail.Article{
+		From:    "Sysop",
+		Subject: "Listed",
+		MsgID:   "list-1@shsbbs.net",
+		Body:    "body",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur := mail.NewsGroup{Name: "test.group", Area: cfgrec.MessageArea{JAMBase: base}}
+	srv, cli := net.Pipe()
+	defer cli.Close()
+	ss := &session{cur: cur, groups: []mail.NewsGroup{cur}, c: srv}
+	go func() {
+		ss.cmdGroup("test.group")
+		ss.cmdXover("1-1")
+		ss.cmdXover(strconv.Itoa(num) + "-" + strconv.Itoa(num))
+		_ = srv.Close()
+	}()
+	r := bufio.NewReader(cli)
+	g211, err := r.ReadString('\n')
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(g211, "211 ") {
+		t.Fatalf("GROUP %q", g211)
+	}
+	count := 0
+	for i := 0; i < 2; i++ {
+		st, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(st, "224 ") {
+			t.Fatalf("XOVER %q", st)
+		}
+		row, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(row, "Listed") {
+			t.Fatalf("overview %q", row)
+		}
+		end, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if end != ".\r\n" {
+			t.Fatalf("end %q", end)
+		}
+		count++
+	}
+	if count != 2 {
+		t.Fatalf("count %d", count)
 	}
 }
 

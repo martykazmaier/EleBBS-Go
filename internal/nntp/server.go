@@ -181,7 +181,7 @@ func (ss *session) cmdList(arg string) {
 	}
 	ss.line("215 List of newsgroups follow")
 	for _, g := range ss.groups {
-		st := mail.Stats(g.Area.JAMBase)
+		st := mail.NNTPStats(g.Area.JAMBase)
 		post := "n"
 		if g.Posting {
 			post = "y"
@@ -202,7 +202,7 @@ func (ss *session) cmdGroup(name string) {
 		return
 	}
 	ss.cur = g
-	st := mail.Stats(g.Area.JAMBase)
+	st := mail.NNTPStats(g.Area.JAMBase)
 	ss.curNum = st.First
 	ss.line("211 %d %d %d %s", st.Active, st.First, st.High, g.Name)
 }
@@ -262,18 +262,15 @@ func (ss *session) cmdArticle(kind, arg string) {
 
 func (ss *session) findArticleID(id string) (mail.NewsGroup, mail.Article, bool) {
 	id = strings.Trim(id, "<>")
+	if ss.cur.Name != "" {
+		if art, ok := mail.FindByMsgID(ss.cur.Area.JAMBase, id); ok {
+			return ss.cur, art, true
+		}
+		return mail.NewsGroup{}, mail.Article{}, false
+	}
 	for _, group := range ss.groups {
-		var found mail.Article
-		ok := false
-		mail.Walk(group.Area.JAMBase, true, func(a mail.Article) bool {
-			if strings.EqualFold(strings.Trim(a.MsgID, "<>"), id) {
-				found, ok = a, true
-				return false
-			}
-			return true
-		})
-		if ok {
-			return group, found, true
+		if art, ok := mail.FindByMsgID(group.Area.JAMBase, id); ok {
+			return group, art, true
 		}
 	}
 	return mail.NewsGroup{}, mail.Article{}, false
@@ -348,13 +345,14 @@ func (ss *session) cmdXover(arg string) {
 		ss.line("%d %s", code, nntpStatus(code))
 		return
 	}
-	st := mail.Stats(ss.cur.Area.JAMBase)
-	lo, hi := st.First, st.High
+	lo, hi := 0, 0
 	if arg != "" {
 		if i := strings.IndexByte(arg, '-'); i >= 0 {
 			lo, _ = strconv.Atoi(arg[:i])
 			if rest := arg[i+1:]; rest != "" {
 				hi, _ = strconv.Atoi(rest)
+			} else {
+				hi = 0
 			}
 		} else {
 			lo, _ = strconv.Atoi(arg)
@@ -364,8 +362,16 @@ func (ss *session) cmdXover(arg string) {
 	ss.line("224 Overview information follows")
 	dom := ss.ns.DomainName
 	mail.Walk(ss.cur.Area.JAMBase, false, func(a mail.Article) bool {
-		if a.Num < lo || a.Num > hi {
-			return true
+		if lo > 0 || hi > 0 {
+			inNum := a.Num >= lo && (hi <= 0 || a.Num <= hi)
+			slot := a.Slot
+			if slot == 0 {
+				slot = a.Num
+			}
+			inSlot := slot >= lo && (hi <= 0 || slot <= hi)
+			if !inNum && !inSlot {
+				return true
+			}
 		}
 		ss.line("%d\t%s\t%s\t%s\t<%s>\t%s\t%d\t%d",
 			a.Num, a.Subject, mail.HostEmail(a.From, dom), mail.NNTPDate(a.Date),
